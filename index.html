@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fitfall.de — about FIT and pitfalls</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ifitfitsisits.com</h1>
+      <p class="tagline">if it FITs, I sits</p>
+    </header>
+
+    <div class="main-panel">
+      <div class="cat-art">
+        <img id="cat-img-before" src="img/before.webp" alt="Cat sleeps on laptop">
+        <img id="cat-img-after" src="img/after.webp" alt="Cat alert on laptop" class="hidden">
+      </div>
+
+      <div class="controls-panel">
+        <div id="dropzone" class="dropzone">
+          <p>Drag &amp; drop a FIT image here<br>or click to browse</p>
+          <input type="file" id="file-input" accept=".fit,.itb,.img,.bin">
+        </div>
+
+        <div id="progress-container" class="progress-container hidden">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+
+        <div id="fit-info" class="fit-info hidden">
+          <h2>FIT Image Info</h2>
+          <div id="fit-info-content"></div>
+        </div>
+
+        <div id="error-box" class="error-box hidden"></div>
+
+        <div id="options" class="options hidden">
+          <label>
+            <input type="checkbox" id="opt-model" checked>
+            Change DT Model
+          </label>
+          <label>
+            <input type="checkbox" id="opt-kernel">
+            Replace Kernel
+          </label>
+          <div id="kernel-upload" class="kernel-upload hidden">
+            <input type="file" id="kernel-file-input">
+            <span id="kernel-file-name">No file selected</span>
+          </div>
+        </div>
+
+        <button id="root-btn" class="root-btn hidden">root!</button>
+
+        <div id="download-section" class="download-section hidden">
+          <a id="download-link" class="download-link">Download rooted FIT image</a>
+        </div>
+      </div>
+    </div>
+
+    <section class="explainer">
+      <h2>What is this?</h2>
+      <p>
+        The <strong>FIT (Flattened Image Tree)</strong> format bundles kernel,
+        device tree, and ramdisk images for embedded Linux boot via U-Boot.
+        It uses the Device Tree Blob (DTB) binary format internally.
+      </p>
+      <p>
+        FIT supports cryptographic signatures to ensure image integrity, but
+        verification must be actively enforced at every level. Common weaknesses include:
+      </p>
+      <ul>
+        <li><strong>Signatures disabled</strong> &mdash; <code>CONFIG_FIT_SIGNATURE</code> not enabled in U-Boot build</li>
+        <li><strong>Configuration signatures not required</strong> &mdash; unsigned configurations can load unsigned images (CVE-2020-10648)</li>
+        <li><strong>Unsigned images loaded without checks</strong> &mdash; individual image nodes lack signatures, only configuration is signed</li>
+      </ul>
+      <p>
+        This tool demonstrates two modifications:
+      </p>
+      <ul>
+        <li><strong>Model property manipulation</strong> &mdash; the nested device tree's <code>model</code> property is changed, proving the DTB can be modified</li>
+        <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, showing unsigned payloads can be substituted</li>
+      </ul>
+      <p>
+        After modification, CRC32 and SHA-256 hashes are recalculated, but
+        signature nodes are removed (we don't have the private key &mdash;
+        that's the whole point).
+      </p>
+      <p class="disclaimer">
+        Use responsibly and only on devices you own. This tool is for
+        educational and authorized security research purposes only.
+      </p>
+    </section>
+
+    <footer>
+      <p>&copy; Ahmad Fatoum</p>
+    </footer>
+  </div>
+
+  <script src="js/fdt-parser.js"></script>
+  <script src="js/fit-ops.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
