@@ -121,10 +121,27 @@ header h1 {
   width: 280px;
 }
 
+.cat-art {
+  position: relative;
+}
+
 .cat-art img {
   width: 100%;
   height: auto;
   border-radius: 8px;
+  transition: opacity 2s ease;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.cat-art img:first-child {
+  position: relative;
+}
+
+.cat-art img.cat-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .controls-panel {
@@ -192,14 +209,42 @@ header h1 {
   background: #222;
   border: 1px solid #333;
   border-radius: 6px;
-  padding: 1rem 1.2rem;
+  padding: 0 1.2rem 1rem;
   margin-bottom: 1rem;
 }
 
-.fit-info h2 {
-  font-size: 1rem;
+.fit-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 -1.2rem;
+  padding: 0 1.2rem;
+  border-bottom: 1px solid #333;
+}
+
+.fit-tab {
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.7rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #888;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.fit-tab:hover {
+  color: #d0d0d0;
+}
+
+.fit-tab.active {
   color: #ff6a00;
-  margin-bottom: 0.5rem;
+  border-bottom-color: #ff6a00;
+}
+
+.fit-tab-content {
+  padding-top: 0.8rem;
 }
 
 .fit-info table {
@@ -260,6 +305,11 @@ header h1 {
 .options input[type="checkbox"] {
   margin-right: 0.5rem;
   accent-color: #ff6a00;
+}
+
+.option-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .kernel-option {
@@ -445,6 +495,81 @@ footer {
   border-top: 1px solid #2a2a2a;
   color: #555;
   font-size: 0.8rem;
+}
+
+.config-entry {
+  margin-bottom: 0.3rem;
+}
+
+.config-header {
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.config-header:hover {
+  background: #2a2a2a;
+}
+
+.config-toggle {
+  display: inline-block;
+  width: 1em;
+  font-size: 0.7rem;
+  color: #666;
+  transition: color 0.15s;
+}
+
+.config-header:hover .config-toggle {
+  color: #ff6a00;
+}
+
+.config-images {
+  padding-left: 1.5rem;
+}
+
+.config-images table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.config-images td {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+  border-bottom: 1px solid #2a2a2a;
+  color: #999;
+}
+
+.badge-default {
+  display: inline-block;
+  background: #1a2a3a;
+  border: 1px solid #4a8;
+  color: #6cb;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+
+.badge-signed {
+  display: inline-block;
+  background: #2a2200;
+  border: 1px solid #e67e22;
+  color: #e67e22;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  margin-left: 0.3rem;
+  vertical-align: middle;
 }
 
 .badge-pwned {

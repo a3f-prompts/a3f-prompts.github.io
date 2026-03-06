@@ -87,30 +87,45 @@ const FitOps = (() => {
       const data = FDT.getProperty(img, 'data');
       const size = data ? data.byteLength : 0;
       const compression = FDT.getStringProperty(img, 'compression') || 'none';
-      return { name: img.name, type, description: desc, size, compression, isOrig };
+      const arch = FDT.getStringProperty(img, 'arch') || '';
+      return { name: img.name, type, description: desc, size, compression, arch, isOrig };
     });
 
     const desc = FDT.getStringProperty(tree.root, 'description') || '';
 
-    // Scan for signatures
+    // Scan configurations and signatures
     const signatures = [];
+    const configs = [];
     const configsNode = FDT.findNode(tree.root, ['configurations']);
+    const defaultConfig = configsNode ? (FDT.getStringProperty(configsNode, 'default') || '') : '';
     if (configsNode) {
       for (const cfg of configsNode.children) {
+        const cfgSigs = [];
+        const imageRefs = [];
         for (const child of cfg.children) {
           if (child.name.startsWith('signature')) {
             const algo = FDT.getStringProperty(child, 'algo') || 'unknown';
+            cfgSigs.push({ name: child.name, algo });
             signatures.push({ config: cfg.name, name: child.name, algo });
           }
         }
+        // Collect image references (kernel, fdt, ramdisk, etc.)
+        const imageNames = new Set(imagesNode.children.map(c => c.name));
+        const refProps = ['kernel', 'fdt', 'ramdisk', 'loadables', 'firmware', 'standalone', 'fpga', 'setup'];
+        for (const prop of refProps) {
+          const val = FDT.getStringProperty(cfg, prop);
+          if (val && imageNames.has(val)) imageRefs.push({ role: prop, image: val });
+        }
+        const cfgDesc = FDT.getStringProperty(cfg, 'description') || '';
+        configs.push({ name: cfg.name, description: cfgDesc, imageRefs, signatures: cfgSigs, isDefault: cfg.name === defaultConfig });
       }
     }
     const hasSignatures = signatures.length > 0;
-    const numConfigs = configsNode ? configsNode.children.length : 0;
-    const signedConfigs = new Set(signatures.map(s => s.config));
-    const numSignedConfigs = signedConfigs.size;
+    const numConfigs = configs.length;
+    const numSignedConfigs = configs.filter(c => c.signatures.length > 0).length;
+    const sigAlgos = [...new Set(signatures.map(s => s.algo))];
 
-    return { valid: true, tree, images, description: desc, signatures, hasSignatures, numConfigs, numSignedConfigs, error: null };
+    return { valid: true, tree, images, description: desc, signatures, hasSignatures, numConfigs, numSignedConfigs, sigAlgos, configs, error: null };
   }
 
   /**
@@ -343,6 +358,18 @@ const FitOps = (() => {
   }
 
   /**
+   * Find the ramdisk image node under /images.
+   */
+  function findRamdiskImage(tree) {
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    if (!imagesNode) return null;
+    return imagesNode.children.find(img => {
+      const type = FDT.getStringProperty(img, 'type');
+      return type === 'ramdisk';
+    }) || null;
+  }
+
+  /**
    * Full rooting operation: modify DT model, replace kernel, bypass signatures, serialize.
    */
   async function root(buffer, options) {
@@ -382,6 +409,27 @@ const FitOps = (() => {
       await bypassSignature(tree, kernelImg.name, new Uint8Array(options.kernelData));
     }
 
+    if (options.appendInitramfs && options.initramfsData) {
+      const ramdiskImg = findRamdiskImage(tree);
+      if (!ramdiskImg) throw new Error('No ramdisk image found in FIT');
+      let existingData = FDT.getProperty(ramdiskImg, 'data');
+      if (!existingData) throw new Error('Ramdisk image has no data property');
+
+      // Decompress if compressed
+      const compression = FDT.getStringProperty(ramdiskImg, 'compression') || 'none';
+      if (compression === 'gzip') {
+        existingData = await gunzip(existingData);
+      }
+
+      // Concatenate existing ramdisk + new initramfs (CPIO archives are concatenable)
+      const appendData = new Uint8Array(options.initramfsData);
+      const combined = new Uint8Array(existingData.byteLength + appendData.byteLength);
+      combined.set(existingData, 0);
+      combined.set(appendData, existingData.byteLength);
+
+      await bypassSignature(tree, ramdiskImg.name, combined);
+    }
+
     return FDT.serialize(tree);
   }
 
@@ -392,5 +440,6 @@ const FitOps = (() => {
     sha256,
     findFdtImage,
     findKernelImage,
+    findRamdiskImage,
   };
 })();

@@ -16,6 +16,10 @@
   const kernelUpload = document.getElementById('kernel-upload');
   const kernelFileInput = document.getElementById('kernel-file-input');
   const kernelFileName = document.getElementById('kernel-file-name');
+  const optInitramfs = document.getElementById('opt-initramfs');
+  const initramfsUpload = document.getElementById('initramfs-upload');
+  const initramfsFileInput = document.getElementById('initramfs-file-input');
+  const initramfsFileName = document.getElementById('initramfs-file-name');
   const rootBtn = document.getElementById('root-btn');
   const downloadSection = document.getElementById('download-section');
   const downloadLink = document.getElementById('download-link');
@@ -23,11 +27,13 @@
 
   const fitSelect = document.getElementById('fit-select');
   const fitSelectList = document.getElementById('fit-select-list');
+  const fitConfigContent = document.getElementById('fit-config-content');
 
   let fitBuffer = null;       // The FIT image data (extracted or direct)
   let diskBuffer = null;      // Original disk image (null if file was a plain FIT)
   let diskFitInfo = null;     // { offset, totalsize } if extracted from disk image
   let kernelBuffer = null;
+  let initramfsBuffer = null;
   let fitFileName = 'image.fit';
   let lastValidateResult = null;
 
@@ -37,15 +43,15 @@
 
   function showAfterImage() {
     if (catImgBefore && catImgAfter) {
-      catImgBefore.classList.add('hidden');
-      catImgAfter.classList.remove('hidden');
+      catImgBefore.classList.add('cat-hidden');
+      catImgAfter.classList.remove('cat-hidden');
     }
   }
 
   function showBeforeImage() {
     if (catImgBefore && catImgAfter) {
-      catImgBefore.classList.remove('hidden');
-      catImgAfter.classList.add('hidden');
+      catImgBefore.classList.remove('cat-hidden');
+      catImgAfter.classList.add('cat-hidden');
     }
   }
 
@@ -240,6 +246,7 @@
     if (opts) {
       if (opts.changeDtModel) modifiedTypes.add('flat_dt');
       if (opts.replaceKernel) modifiedTypes.add('kernel');
+      if (opts.appendInitramfs) modifiedTypes.add('ramdisk');
     }
 
     let html = '<table>';
@@ -252,19 +259,20 @@
     let summary = `${result.images.length} image${result.images.length !== 1 ? 's' : ''}`;
     if (result.numConfigs > 0) {
       const allSigned = sigResult.numSignedConfigs === result.numConfigs && sigResult.hasSignatures;
+      const algoStr = sigResult.sigAlgos.length > 0 ? ` (${sigResult.sigAlgos.join(', ')})` : '';
       if (allSigned) {
         if (isRooted) {
-          summary += ` across <span class="badge-pwned">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''} &mdash; bypassed</span>`;
+          summary += ` across <span style="color:#e67e22;font-weight:bold">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span> &mdash; <span class="badge-pwned">bypassed</span>`;
         } else {
-          summary += ` across <span style="color:#e67e22;font-weight:bold">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}</span>`;
+          summary += ` across <span style="color:#e67e22;font-weight:bold">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span>`;
         }
       } else {
         summary += ` across ${result.numConfigs} configuration${result.numConfigs !== 1 ? 's' : ''}`;
         if (sigResult.hasSignatures) {
           if (isRooted) {
-            summary += ` (<span class="badge-pwned">${sigResult.numSignedConfigs} signed &mdash; bypassed</span>)`;
+            summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.numSignedConfigs} signed${algoStr})</span> &mdash; <span class="badge-pwned">bypassed</span>`;
           } else {
-            summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.numSignedConfigs} signed)</span>`;
+            summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.numSignedConfigs} signed${algoStr})</span>`;
           }
         }
       }
@@ -282,6 +290,7 @@
 
       let extra = '';
       if (img.description) extra = esc(img.description);
+      if (img.arch && (img.type === 'kernel' || img.type === 'kernel_noload')) extra += ` (${esc(img.arch)})`;
       if (isRooted && !img.isOrig) {
         const isPwned = img.description.includes('(Pwnd)') || modifiedTypes.has(img.type);
         if (isPwned) extra += ' <span class="badge-pwned">pwned</span>';
@@ -302,6 +311,92 @@
     });
   }
 
+  function renderConfigTab(result, opts) {
+    const isRooted = !!opts;
+    const sigResult = isRooted ? lastValidateResult : result;
+    const configs = result.configs || [];
+    if (configs.length === 0) {
+      fitConfigContent.innerHTML = '<p style="color:#888;font-size:0.85rem">No configurations found.</p>';
+      return;
+    }
+
+    // Build image lookup for showing details
+    const imageMap = {};
+    for (const img of result.images) {
+      imageMap[img.name] = img;
+    }
+
+    let html = '';
+    for (const cfg of configs) {
+      const defaultBadge = cfg.isDefault ? ' <span class="badge-default">default</span>' : '';
+      const sigBadges = cfg.signatures.map(s => {
+        if (isRooted) {
+          return ` <span class="badge-pwned">${esc(s.algo)} &mdash; bypassed</span>`;
+        }
+        return ` <span class="badge-signed">${esc(s.algo)}</span>`;
+      }).join('');
+      const descStr = cfg.description ? ` &mdash; ${esc(cfg.description)}` : '';
+
+      html += `<div class="config-entry">`;
+      html += `<div class="config-header" data-config="${esc(cfg.name)}">`;
+      html += `<span class="config-toggle">&#9654;</span> `;
+      html += `<strong>${esc(cfg.name)}</strong>${descStr}${defaultBadge}${sigBadges}`;
+      html += `</div>`;
+      html += `<div class="config-images hidden">`;
+
+      if (cfg.imageRefs.length > 0) {
+        html += '<table>';
+        for (const ref of cfg.imageRefs) {
+          const img = imageMap[ref.image];
+          if (img) {
+            let typeStr = esc(img.type);
+            if (img.compression !== 'none') typeStr += ` (${esc(img.compression)})`;
+            html += `<tr><td>&nbsp;&nbsp;${esc(ref.role)}</td><td><a class="img-download" data-img="${esc(ref.image)}">${esc(ref.image)}</a></td><td>${typeStr}</td><td>${formatSize(img.size)}</td></tr>`;
+          } else {
+            html += `<tr><td>&nbsp;&nbsp;${esc(ref.role)}</td><td>${esc(ref.image)}</td><td colspan="2"></td></tr>`;
+          }
+        }
+        html += '</table>';
+      } else {
+        html += '<p style="color:#666;font-size:0.8rem;padding:0.3rem 0">&nbsp;&nbsp;No image references</p>';
+      }
+
+      html += `</div></div>`;
+    }
+
+    fitConfigContent.innerHTML = html;
+
+    // Toggle expand/collapse on config headers
+    fitConfigContent.querySelectorAll('.config-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const images = header.nextElementSibling;
+        const toggle = header.querySelector('.config-toggle');
+        images.classList.toggle('hidden');
+        toggle.innerHTML = images.classList.contains('hidden') ? '&#9654;' : '&#9660;';
+      });
+    });
+
+    // Bind download links in config tab
+    fitConfigContent.querySelectorAll('.img-download').forEach(a => {
+      a.addEventListener('click', (e) => {
+        e.stopPropagation();
+        downloadImageData(result.tree, a.dataset.img);
+      });
+    });
+  }
+
+  function initTabs() {
+    fitInfo.querySelectorAll('.fit-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        fitInfo.querySelectorAll('.fit-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        fitInfo.querySelectorAll('.fit-tab-content').forEach(c => c.classList.add('hidden'));
+        document.getElementById('fit-tab-' + tab.dataset.tab).classList.remove('hidden');
+      });
+    });
+  }
+  initTabs();
+
   function parseFit() {
     const result = FitOps.validate(fitBuffer);
     if (!result.valid) {
@@ -311,9 +406,20 @@
     lastValidateResult = result;
 
     renderImageTable(result, null);
+    renderConfigTab(result, null);
     fitInfo.classList.remove('hidden');
     options.classList.remove('hidden');
     rootBtn.classList.remove('hidden');
+
+    // Disable initramfs option if no ramdisk exists
+    const hasRamdisk = result.images.some(img => img.type === 'ramdisk');
+    optInitramfs.disabled = !hasRamdisk;
+    optInitramfs.parentElement.classList.toggle('option-disabled', !hasRamdisk);
+    if (!hasRamdisk) {
+      optInitramfs.checked = false;
+      initramfsUpload.classList.add('hidden');
+      initramfsBuffer = null;
+    }
   }
 
   function esc(str) {
@@ -326,6 +432,7 @@
     const result = FitOps.validate(outputBuffer);
     if (!result.valid) return;
     renderImageTable(result, opts);
+    renderConfigTab(result, opts);
   }
 
   // --- Drag and drop ---
@@ -381,6 +488,38 @@
     }
   });
 
+  // --- Initramfs file picker ---
+
+  optInitramfs.parentElement.addEventListener('click', () => {
+    if (optInitramfs.disabled) {
+      showError('No ramdisk to append found in FIT');
+    }
+  });
+
+  optInitramfs.addEventListener('change', () => {
+    if (optInitramfs.checked) {
+      initramfsUpload.classList.remove('hidden');
+    } else {
+      initramfsUpload.classList.add('hidden');
+      initramfsBuffer = null;
+      initramfsFileName.textContent = 'No file selected';
+    }
+  });
+
+  document.getElementById('initramfs-browse-btn').addEventListener('click', () => {
+    initramfsFileInput.click();
+  });
+
+  initramfsFileInput.addEventListener('change', () => {
+    if (initramfsFileInput.files.length > 0) {
+      const file = initramfsFileInput.files[0];
+      initramfsFileName.textContent = file.name;
+      const reader = new FileReader();
+      reader.onload = () => { initramfsBuffer = reader.result; };
+      reader.readAsArrayBuffer(file);
+    }
+  });
+
   // --- Root action ---
 
   rootBtn.addEventListener('click', async () => {
@@ -396,11 +535,17 @@
         changeDtModel: optModel.checked,
         replaceKernel: optKernel.checked,
         kernelData: kernelBuffer,
+        appendInitramfs: optInitramfs.checked,
+        initramfsData: initramfsBuffer,
         signatureBypass: true,
       };
 
       if (opts.replaceKernel && !opts.kernelData) {
         throw new Error('Please select a replacement kernel file');
+      }
+
+      if (opts.appendInitramfs && !opts.initramfsData) {
+        throw new Error('Please select an initramfs file to append');
       }
 
       progressBar.style.width = '0%';

@@ -18,7 +18,7 @@
     <div class="main-panel">
       <div class="cat-art">
         <img id="cat-img-before" src="img/before.webp" alt="Cat sleeps on laptop">
-        <img id="cat-img-after" src="img/after.webp" alt="Cat alert on laptop" class="hidden">
+        <img id="cat-img-after" src="img/after.webp" alt="Cat alert on laptop" class="cat-hidden">
       </div>
 
       <div class="controls-panel">
@@ -35,8 +35,16 @@
       </div>
 
       <div id="fit-info" class="fit-info hidden">
-        <h2>FIT Image Info</h2>
-        <div id="fit-info-content"></div>
+        <div class="fit-tabs">
+          <button class="fit-tab active" data-tab="images">FIT Image Info</button>
+          <button class="fit-tab" data-tab="configs">FIT Configuration Info</button>
+        </div>
+        <div id="fit-tab-images" class="fit-tab-content">
+          <div id="fit-info-content"></div>
+        </div>
+        <div id="fit-tab-configs" class="fit-tab-content hidden">
+          <div id="fit-config-content"></div>
+        </div>
       </div>
 
       <div id="fit-select" class="fit-select hidden">
@@ -61,6 +69,17 @@
             <button type="button" id="kernel-browse-btn" class="browse-btn">Browse...</button>
             <input type="file" id="kernel-file-input">
             <span id="kernel-file-name">No file selected</span>
+          </div>
+        </div>
+        <div class="kernel-option">
+          <label>
+            <input type="checkbox" id="opt-initramfs">
+            Append Initramfs
+          </label>
+          <div id="initramfs-upload" class="kernel-upload hidden">
+            <button type="button" id="initramfs-browse-btn" class="browse-btn">Browse...</button>
+            <input type="file" id="initramfs-file-input">
+            <span id="initramfs-file-name">No file selected</span>
           </div>
         </div>
       </div>
