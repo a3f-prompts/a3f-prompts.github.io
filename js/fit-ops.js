@@ -141,6 +141,18 @@ const FitOps = (() => {
   }
 
   /**
+   * Find all flat_dt image nodes under /images.
+   */
+  function findAllFdtImages(tree) {
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    if (!imagesNode) return [];
+    return imagesNode.children.filter(img => {
+      const type = FDT.getStringProperty(img, 'type');
+      return type === 'flat_dt';
+    });
+  }
+
+  /**
    * Find the kernel image node under /images.
    */
   function findKernelImage(tree) {
@@ -150,6 +162,30 @@ const FitOps = (() => {
       const type = FDT.getStringProperty(img, 'type');
       return type === 'kernel' || type === 'kernel_noload';
     }) || null;
+  }
+
+  /**
+   * Find all kernel image nodes under /images.
+   */
+  function findAllKernelImages(tree) {
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    if (!imagesNode) return [];
+    return imagesNode.children.filter(img => {
+      const type = FDT.getStringProperty(img, 'type');
+      return type === 'kernel' || type === 'kernel_noload';
+    });
+  }
+
+  /**
+   * Find all ramdisk image nodes under /images.
+   */
+  function findAllRamdiskImages(tree) {
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    if (!imagesNode) return [];
+    return imagesNode.children.filter(img => {
+      const type = FDT.getStringProperty(img, 'type');
+      return type === 'ramdisk';
+    });
   }
 
   /**
@@ -391,49 +427,58 @@ const FitOps = (() => {
     FDT.resolveExternalData(tree.root, u8buf);
 
     if (options.changeDtModel) {
-      const fdtImg = findFdtImage(tree);
-      if (!fdtImg) throw new Error('No flat_dt image found in FIT');
-      let dtData = FDT.getProperty(fdtImg, 'data');
-      if (!dtData) throw new Error('flat_dt image has no data property');
+      const fdtImages = findAllFdtImages(tree);
+      if (fdtImages.length === 0) throw new Error('No flat_dt image found in FIT');
 
-      // Decompress if compressed
-      const compression = FDT.getStringProperty(fdtImg, 'compression') || 'none';
-      if (compression === 'gzip') {
-        dtData = await gunzip(dtData);
+      for (const fdtImg of fdtImages) {
+        let dtData = FDT.getProperty(fdtImg, 'data');
+        if (!dtData) continue;
+
+        // Decompress if compressed
+        const compression = FDT.getStringProperty(fdtImg, 'compression') || 'none';
+        if (compression === 'gzip') {
+          dtData = await gunzip(dtData);
+        }
+
+        const innerTree = FDT.parse(dtData);
+        const origModel = FDT.getStringProperty(innerTree.root, 'model') || '';
+        FDT.setProperty(innerTree.root, 'model', origModel + ' [rooted by ifitfitsisits.com]');
+        const newDtData = FDT.serialize(innerTree);
+
+        await bypassSignature(tree, fdtImg.name, newDtData);
       }
-
-      const innerTree = FDT.parse(dtData);
-      FDT.setProperty(innerTree.root, 'model', 'rooted by ifitfitsisits.com');
-      const newDtData = FDT.serialize(innerTree);
-
-      await bypassSignature(tree, fdtImg.name, newDtData);
     }
 
     if (options.replaceKernel && options.kernelData) {
-      const kernelImg = findKernelImage(tree);
-      if (!kernelImg) throw new Error('No kernel image found in FIT');
-      await bypassSignature(tree, kernelImg.name, new Uint8Array(options.kernelData));
+      const kernelImages = findAllKernelImages(tree);
+      if (kernelImages.length === 0) throw new Error('No kernel image found in FIT');
+      for (const kernelImg of kernelImages) {
+        await bypassSignature(tree, kernelImg.name, new Uint8Array(options.kernelData));
+      }
     }
 
     if (options.appendInitramfs && options.initramfsData) {
-      const ramdiskImg = findRamdiskImage(tree);
-      if (!ramdiskImg) throw new Error('No ramdisk image found in FIT');
-      let existingData = FDT.getProperty(ramdiskImg, 'data');
-      if (!existingData) throw new Error('Ramdisk image has no data property');
+      const ramdiskImages = findAllRamdiskImages(tree);
+      if (ramdiskImages.length === 0) throw new Error('No ramdisk image found in FIT');
 
-      // Decompress if compressed
-      const compression = FDT.getStringProperty(ramdiskImg, 'compression') || 'none';
-      if (compression === 'gzip') {
-        existingData = await gunzip(existingData);
+      for (const ramdiskImg of ramdiskImages) {
+        let existingData = FDT.getProperty(ramdiskImg, 'data');
+        if (!existingData) continue;
+
+        // Decompress if compressed
+        const compression = FDT.getStringProperty(ramdiskImg, 'compression') || 'none';
+        if (compression === 'gzip') {
+          existingData = await gunzip(existingData);
+        }
+
+        // Concatenate existing ramdisk + new initramfs (CPIO archives are concatenable)
+        const appendData = new Uint8Array(options.initramfsData);
+        const combined = new Uint8Array(existingData.byteLength + appendData.byteLength);
+        combined.set(existingData, 0);
+        combined.set(appendData, existingData.byteLength);
+
+        await bypassSignature(tree, ramdiskImg.name, combined);
       }
-
-      // Concatenate existing ramdisk + new initramfs (CPIO archives are concatenable)
-      const appendData = new Uint8Array(options.initramfsData);
-      const combined = new Uint8Array(existingData.byteLength + appendData.byteLength);
-      combined.set(existingData, 0);
-      combined.set(appendData, existingData.byteLength);
-
-      await bypassSignature(tree, ramdiskImg.name, combined);
     }
 
     return FDT.serialize(tree);

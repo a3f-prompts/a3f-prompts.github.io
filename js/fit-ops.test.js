@@ -322,7 +322,24 @@ describe('DT model change', () => {
     const innerDtb = FDT.getProperty(fdtImg, 'data');
     const innerTree = FDT.parse(innerDtb);
     const model = FDT.getStringProperty(innerTree.root, 'model');
-    assert.equal(model, 'rooted by ifitfitsisits.com');
+    assert.equal(model, 'Test Board [rooted by ifitfitsisits.com]');
+  });
+
+  it('all flat_dt images across configurations get /model changed', async () => {
+    const binary = await buildMultiConfigFit();
+    const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
+    const tree = FDT.parse(result);
+
+    // Both fdt-1 and fdt-2 should have their /model changed
+    for (const fdtName of ['fdt-1', 'fdt-2']) {
+      const fdtImg = FDT.findNode(tree.root, ['images', fdtName]);
+      assert.ok(fdtImg, `Expected /images/${fdtName}`);
+      const dtData = FDT.getProperty(fdtImg, 'data');
+      const innerTree = FDT.parse(dtData);
+      const model = FDT.getStringProperty(innerTree.root, 'model');
+      assert.ok(model.includes('[rooted by ifitfitsisits.com]'),
+        `${fdtName} /model should be modified, got: ${model}`);
+    }
   });
 
   it('DT model change creates orig node for fdt-1', async () => {
@@ -353,7 +370,7 @@ describe('DT model change', () => {
     const origModel = FDT.getStringProperty(origTree.root, 'model');
 
     assert.equal(origModel, 'Test Board', 'Original /model should be preserved');
-    assert.equal(newModel, 'rooted by ifitfitsisits.com', 'Modified /model should indicate rooting');
+    assert.equal(newModel, 'Test Board [rooted by ifitfitsisits.com]', 'Modified /model should append rooting tag');
     assert.notEqual(origModel, newModel, '/model must differ between original and modified DTBs');
   });
 });
@@ -643,5 +660,229 @@ describe('Per-image container ordering', () => {
       'hashed-nodes should reference orig-ramdisk container');
     assert.ok(!hashedNodes.includes('/images/kernel/'),
       'hashed-nodes should NOT reference original kernel path');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-config helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a FIT with two configurations referencing different FDT images.
+ *   conf-1: kernel + fdt-1 (Board A)
+ *   conf-2: kernel + fdt-2 (Board B)
+ * Both share the same kernel image.
+ */
+async function buildMultiConfigFit() {
+  const enc = new TextEncoder();
+  const kernel = enc.encode('kernel data');
+  const fdt1 = buildMinimalDtb('Board A');
+  const fdt2 = buildMinimalDtb('Board B');
+
+  const kernelHash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', kernel));
+  const fdt1Hash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', fdt1));
+  const fdt2Hash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', fdt2));
+
+  function strProp(s) { return enc.encode(s + '\0'); }
+  function u32Prop(v) {
+    const b = new ArrayBuffer(4);
+    new DataView(b).setUint32(0, v);
+    return new Uint8Array(b);
+  }
+
+  const tree = {
+    header: { version: 17, last_comp_version: 16, boot_cpuid_phys: 0 },
+    reserveEntries: [],
+    root: {
+      name: '',
+      properties: [
+        { name: 'description', data: strProp('Multi-config FIT') },
+        { name: '#address-cells', data: u32Prop(1) },
+      ],
+      children: [
+        {
+          name: 'images',
+          properties: [],
+          children: [
+            {
+              name: 'kernel',
+              properties: [
+                { name: 'description', data: strProp('Linux Kernel') },
+                { name: 'data', data: new Uint8Array(kernel) },
+                { name: 'type', data: strProp('kernel') },
+                { name: 'arch', data: strProp('arm') },
+                { name: 'os', data: strProp('linux') },
+                { name: 'compression', data: strProp('none') },
+                { name: 'load', data: u32Prop(0x40008000) },
+                { name: 'entry', data: u32Prop(0x40008000) },
+              ],
+              children: [{
+                name: 'hash-1',
+                properties: [
+                  { name: 'algo', data: strProp('sha256') },
+                  { name: 'value', data: kernelHash },
+                ],
+                children: [],
+              }],
+            },
+            {
+              name: 'fdt-1',
+              properties: [
+                { name: 'description', data: strProp('Board A DTB') },
+                { name: 'data', data: new Uint8Array(fdt1) },
+                { name: 'type', data: strProp('flat_dt') },
+                { name: 'arch', data: strProp('arm') },
+                { name: 'compression', data: strProp('none') },
+              ],
+              children: [{
+                name: 'hash-1',
+                properties: [
+                  { name: 'algo', data: strProp('sha256') },
+                  { name: 'value', data: fdt1Hash },
+                ],
+                children: [],
+              }],
+            },
+            {
+              name: 'fdt-2',
+              properties: [
+                { name: 'description', data: strProp('Board B DTB') },
+                { name: 'data', data: new Uint8Array(fdt2) },
+                { name: 'type', data: strProp('flat_dt') },
+                { name: 'arch', data: strProp('arm') },
+                { name: 'compression', data: strProp('none') },
+              ],
+              children: [{
+                name: 'hash-1',
+                properties: [
+                  { name: 'algo', data: strProp('sha256') },
+                  { name: 'value', data: fdt2Hash },
+                ],
+                children: [],
+              }],
+            },
+          ],
+        },
+        {
+          name: 'configurations',
+          properties: [{ name: 'default', data: strProp('conf-1') }],
+          children: [
+            {
+              name: 'conf-1',
+              properties: [
+                { name: 'description', data: strProp('Board A config') },
+                { name: 'kernel', data: strProp('kernel') },
+                { name: 'fdt', data: strProp('fdt-1') },
+              ],
+              children: [{
+                name: 'signature-1',
+                properties: [
+                  { name: 'algo', data: strProp('sha256,rsa2048') },
+                  { name: 'key-name-hint', data: strProp('dev') },
+                  { name: 'sign-images', data: enc.encode('kernel\0fdt\0') },
+                  { name: 'hashed-nodes', data: enc.encode(
+                    '/images/kernel\0/images/kernel/hash-1\0' +
+                    '/images/fdt-1\0/images/fdt-1/hash-1\0'
+                  )},
+                ],
+                children: [],
+              }],
+            },
+            {
+              name: 'conf-2',
+              properties: [
+                { name: 'description', data: strProp('Board B config') },
+                { name: 'kernel', data: strProp('kernel') },
+                { name: 'fdt', data: strProp('fdt-2') },
+              ],
+              children: [{
+                name: 'signature-1',
+                properties: [
+                  { name: 'algo', data: strProp('sha256,rsa2048') },
+                  { name: 'key-name-hint', data: strProp('dev') },
+                  { name: 'sign-images', data: enc.encode('kernel\0fdt\0') },
+                  { name: 'hashed-nodes', data: enc.encode(
+                    '/images/kernel\0/images/kernel/hash-1\0' +
+                    '/images/fdt-2\0/images/fdt-2/hash-1\0'
+                  )},
+                ],
+                children: [],
+              }],
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  return FDT.serialize(tree);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-configuration coverage
+// ---------------------------------------------------------------------------
+describe('Multi-configuration coverage', () => {
+  it('changeDtModel modifies all flat_dt images, not just the first', async () => {
+    const binary = await buildMultiConfigFit();
+    const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
+    const tree = FDT.parse(result);
+
+    for (const fdtName of ['fdt-1', 'fdt-2']) {
+      const fdtImg = FDT.findNode(tree.root, ['images', fdtName]);
+      assert.ok(fdtImg, `Expected /images/${fdtName}`);
+      const dtData = FDT.getProperty(fdtImg, 'data');
+      const innerTree = FDT.parse(dtData);
+      const model = FDT.getStringProperty(innerTree.root, 'model');
+      assert.ok(model.includes('[rooted by ifitfitsisits.com]'),
+        `${fdtName} /model should be modified, got: ${model}`);
+    }
+  });
+
+  it('changeDtModel creates orig containers for all fdt images', async () => {
+    const binary = await buildMultiConfigFit();
+    const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
+    const tree = FDT.parse(result);
+    const images = FDT.findNode(tree.root, ['images']);
+
+    for (const fdtName of ['fdt-1', 'fdt-2']) {
+      const container = images.children.find(c => c.name === `orig-${fdtName}`);
+      assert.ok(container, `Expected /images/orig-${fdtName} container`);
+      const clone = container.children.find(c => c.name === fdtName);
+      assert.ok(clone, `Expected /images/orig-${fdtName}/${fdtName} clone`);
+    }
+  });
+
+  it('changeDtModel redirects signatures in all configurations', async () => {
+    const binary = await buildMultiConfigFit();
+    const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
+    const tree = FDT.parse(result);
+
+    // conf-1 signature should reference orig-fdt-1
+    const sig1 = FDT.findNode(tree.root, ['configurations', 'conf-1', 'signature-1']);
+    const hn1 = new TextDecoder().decode(FDT.getProperty(sig1, 'hashed-nodes'));
+    assert.ok(hn1.includes('/images/orig-fdt-1/fdt-1'),
+      `conf-1 hashed-nodes should reference orig-fdt-1, got: ${hn1}`);
+
+    // conf-2 signature should reference orig-fdt-2
+    const sig2 = FDT.findNode(tree.root, ['configurations', 'conf-2', 'signature-1']);
+    const hn2 = new TextDecoder().decode(FDT.getProperty(sig2, 'hashed-nodes'));
+    assert.ok(hn2.includes('/images/orig-fdt-2/fdt-2'),
+      `conf-2 hashed-nodes should reference orig-fdt-2, got: ${hn2}`);
+  });
+
+  it('changeDtModel preserves original /model in each orig container', async () => {
+    const binary = await buildMultiConfigFit();
+    const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
+    const tree = FDT.parse(result);
+
+    const origFdt1 = FDT.findNode(tree.root, ['images', 'orig-fdt-1', 'fdt-1']);
+    const orig1Data = FDT.getProperty(origFdt1, 'data');
+    const orig1Model = FDT.getStringProperty(FDT.parse(orig1Data).root, 'model');
+    assert.equal(orig1Model, 'Board A', 'orig-fdt-1 should preserve Board A');
+
+    const origFdt2 = FDT.findNode(tree.root, ['images', 'orig-fdt-2', 'fdt-2']);
+    const orig2Data = FDT.getProperty(origFdt2, 'data');
+    const orig2Model = FDT.getStringProperty(FDT.parse(orig2Data).root, 'model');
+    assert.equal(orig2Model, 'Board B', 'orig-fdt-2 should preserve Board B');
   });
 });
