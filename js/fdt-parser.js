@@ -114,7 +114,11 @@ const FDT = (() => {
     }
 
     const root = parseNode();
-    return { header, reserveEntries, root };
+
+    // Preserve original strings block so serialization keeps the same ordering
+    const origStrings = u8.slice(stringsStart, stringsStart + header.size_dt_strings);
+
+    return { header, reserveEntries, root, origStrings: new Uint8Array(origStrings) };
   }
 
   /**
@@ -123,10 +127,28 @@ const FDT = (() => {
   function serialize(tree) {
     const { header, reserveEntries, root } = tree;
 
-    // Build strings table — collect unique property names
+    // Build strings table — reuse original ordering if available, append new strings
     const stringMap = new Map();
     const strings = [];
     let stringsSize = 0;
+
+    // Seed from original strings block to preserve ordering (critical for hashed-strings)
+    if (tree.origStrings && tree.origStrings.byteLength > 0) {
+      const orig = tree.origStrings;
+      let i = 0;
+      while (i < orig.byteLength) {
+        let end = i;
+        while (end < orig.byteLength && orig[end] !== 0) end++;
+        const name = new TextDecoder().decode(orig.slice(i, end));
+        if (name && !stringMap.has(name)) {
+          stringMap.set(name, stringsSize);
+          const encoded = new TextEncoder().encode(name);
+          strings.push(encoded);
+          stringsSize += encoded.byteLength + 1;
+        }
+        i = end + 1;
+      }
+    }
 
     function collectStrings(node) {
       for (const prop of node.properties) {

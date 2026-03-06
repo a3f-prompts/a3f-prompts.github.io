@@ -81,7 +81,7 @@ const FitOps = (() => {
     }
 
     const images = imagesNode.children.map(img => {
-      const isOrig = img.name === 'orig';
+      const isOrig = img.name.startsWith('orig-');
       const type = isOrig ? 'exploit artifact' : (FDT.getStringProperty(img, 'type') || 'unknown');
       const desc = FDT.getStringProperty(img, 'description') || '';
       const data = FDT.getProperty(img, 'data');
@@ -270,11 +270,11 @@ const FitOps = (() => {
   }
 
   /**
-   * Rewrite hashed-nodes in signature nodes to point at /images/orig/<name>.
+   * Rewrite hashed-nodes in signature nodes to point at /images/<container>/<name>.
    */
-  function fixupSignatures(tree, imageName) {
+  function fixupSignatures(tree, imageName, containerName) {
     const oldPrefix = `/images/${imageName}`;
-    const newPrefix = `/images/orig/${imageName}`;
+    const newPrefix = `/images/${containerName}/${imageName}`;
 
     const configsNode = FDT.findNode(tree.root, ['configurations']);
     if (!configsNode) return;
@@ -309,6 +309,11 @@ const FitOps = (() => {
 
   /**
    * Signature bypass: clone original node, replace data, redirect signatures.
+   *
+   * Each bypassed image gets its own container node placed immediately after
+   * the target in /images.  This preserves the binary ordering of cloned
+   * nodes, which is critical because fdt_find_regions walks the FDT linearly
+   * and the concatenated hash input must match the original region order.
    */
   async function bypassSignature(tree, targetNodeName, newData) {
     const imagesNode = FDT.findNode(tree.root, ['images']);
@@ -321,10 +326,11 @@ const FitOps = (() => {
     // Deep clone the original
     const original = FDT.cloneNode(targetNode);
 
-    // Find or create /images/orig
-    let origNode = imagesNode.children.find(c => c.name === 'orig');
+    // Create a per-image container right after the target node
+    const containerName = 'orig-' + targetNodeName;
+    let origNode = imagesNode.children.find(c => c.name === containerName);
     if (!origNode) {
-      origNode = { name: 'orig', properties: [], children: [] };
+      origNode = { name: containerName, properties: [], children: [] };
       const targetIdx = imagesNode.children.indexOf(targetNode);
       imagesNode.children.splice(targetIdx + 1, 0, origNode);
     }
@@ -354,7 +360,7 @@ const FitOps = (() => {
     await recalcHashesForNode(targetNode, data);
 
     // Redirect signature references
-    fixupSignatures(tree, targetNodeName);
+    fixupSignatures(tree, targetNodeName, containerName);
   }
 
   /**

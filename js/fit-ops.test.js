@@ -38,17 +38,17 @@ describe('SignatureBypass', () => {
     const outTree = FDT.parse(result);
     const outImages = FDT.findNode(outTree.root, ['images']);
 
-    // Must have an 'orig' node
-    const origNode = outImages.children.find(c => c.name === 'orig');
-    assert.ok(origNode, 'Expected /images/orig node');
+    // Must have a per-image container node
+    const origNode = outImages.children.find(c => c.name === 'orig-kernel');
+    assert.ok(origNode, 'Expected /images/orig-kernel node');
 
-    // orig must contain a clone of 'kernel'
+    // container must contain a clone of 'kernel'
     const origKernel = origNode.children.find(c => c.name === 'kernel');
-    assert.ok(origKernel, 'Expected /images/orig/kernel node');
+    assert.ok(origKernel, 'Expected /images/orig-kernel/kernel node');
 
-    // orig must contain sentinel
+    // container must contain sentinel
     const sentinel = origNode.children.find(c => c.name === 'sentinel');
-    assert.ok(sentinel, 'Expected /images/orig/sentinel node');
+    assert.ok(sentinel, 'Expected /images/orig-kernel/sentinel node');
   });
 
   it('set_data appends (Pwnd) to description', async () => {
@@ -65,7 +65,7 @@ describe('SignatureBypass', () => {
     const sig = FDT.findNode(outTree.root, ['configurations', 'conf-1', 'signature-1']);
     const hashedNodes = FDT.getProperty(sig, 'hashed-nodes');
     const decoded = new TextDecoder().decode(hashedNodes);
-    assert.ok(decoded.includes('/images/orig/kernel'), `hashed-nodes should reference /images/orig/kernel, got: ${decoded}`);
+    assert.ok(decoded.includes('/images/orig-kernel/kernel'), `hashed-nodes should reference /images/orig-kernel/kernel, got: ${decoded}`);
   });
 
   it('set_data sets compression to none', async () => {
@@ -329,10 +329,10 @@ describe('DT model change', () => {
     const { binary } = await buildTestFit();
     const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
     const tree = FDT.parse(result);
-    const origNode = FDT.findNode(tree.root, ['images', 'orig']);
-    assert.ok(origNode, 'Expected /images/orig');
+    const origNode = FDT.findNode(tree.root, ['images', 'orig-fdt-1']);
+    assert.ok(origNode, 'Expected /images/orig-fdt-1');
     const origFdt = origNode.children.find(c => c.name === 'fdt-1');
-    assert.ok(origFdt, 'Expected /images/orig/fdt-1');
+    assert.ok(origFdt, 'Expected /images/orig-fdt-1/fdt-1');
   });
 });
 
@@ -395,5 +395,231 @@ describe('FDT property utilities', () => {
   it('removeChild returns false for missing child', () => {
     const parent = { name: 'parent', properties: [], children: [] };
     assert.equal(FDT.removeChild(parent, 'missing'), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// String block preservation
+// ---------------------------------------------------------------------------
+describe('String block preservation', () => {
+  it('serialize preserves original string block ordering', async () => {
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+
+    // Modify something to trigger re-serialization with new properties
+    const kernel = FDT.findNode(tree.root, ['images', 'kernel']);
+    FDT.setProperty(kernel, 'data', new TextEncoder().encode('modified'));
+
+    const reserialized = FDT.serialize(tree);
+
+    // Extract string blocks from both
+    const origDv = new DataView(binary.buffer, binary.byteOffset, binary.byteLength);
+    const origStrOff = origDv.getUint32(12);
+    const origStrSize = origDv.getUint32(32);
+    const origStrings = binary.slice(origStrOff, origStrOff + origStrSize);
+
+    const newDv = new DataView(reserialized.buffer, reserialized.byteOffset, reserialized.byteLength);
+    const newStrOff = newDv.getUint32(12);
+    const newStrSize = newDv.getUint32(32);
+    const newStrings = reserialized.slice(newStrOff, newStrOff + newStrSize);
+
+    assert.equal(origStrSize, newStrSize, 'String block sizes should match');
+    assert.deepEqual(origStrings, newStrings, 'String block contents should be identical');
+  });
+
+  it('bypass preserves string block for hashed-strings verification', async () => {
+    const { binary } = await buildTestFit();
+
+    const result = await FitOps.root(binary, {
+      changeDtModel: false,
+      replaceKernel: true,
+      kernelData: new TextEncoder().encode('pwned kernel'),
+    });
+
+    // String blocks must match
+    const origDv = new DataView(binary.buffer, binary.byteOffset, binary.byteLength);
+    const origStrOff = origDv.getUint32(12);
+    const origStrSize = origDv.getUint32(32);
+    const origStrings = binary.slice(origStrOff, origStrOff + origStrSize);
+
+    const newDv = new DataView(result.buffer, result.byteOffset, result.byteLength);
+    const newStrOff = newDv.getUint32(12);
+    const newStrSize = newDv.getUint32(32);
+    const newStrings = result.slice(newStrOff, newStrOff + newStrSize);
+
+    assert.equal(origStrSize, newStrSize, 'String block sizes should match after bypass');
+    assert.deepEqual(origStrings, newStrings, 'String block should be preserved after bypass');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-image container ordering
+// ---------------------------------------------------------------------------
+describe('Per-image container ordering', () => {
+  it('multi-bypass creates separate containers preserving node order', async () => {
+    // Build a FIT with kernel, fdt, and ramdisk
+    const enc = new TextEncoder();
+    const kernel = enc.encode('kernel data');
+    const fdt = buildMinimalDtb('Test Board');
+    const ramdisk = enc.encode('ramdisk data');
+
+    const kernelHash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', kernel));
+    const fdtHash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', fdt));
+    const ramdiskHash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', ramdisk));
+
+    function strProp(s) { return enc.encode(s + '\0'); }
+    function u32Prop(v) {
+      const b = new ArrayBuffer(4);
+      new DataView(b).setUint32(0, v);
+      return new Uint8Array(b);
+    }
+
+    const tree = {
+      header: { version: 17, last_comp_version: 16, boot_cpuid_phys: 0 },
+      reserveEntries: [],
+      root: {
+        name: '',
+        properties: [
+          { name: 'description', data: strProp('Multi-image FIT') },
+          { name: '#address-cells', data: u32Prop(1) },
+        ],
+        children: [
+          {
+            name: 'images',
+            properties: [],
+            children: [
+              {
+                name: 'kernel',
+                properties: [
+                  { name: 'description', data: strProp('Linux Kernel') },
+                  { name: 'data', data: new Uint8Array(kernel) },
+                  { name: 'type', data: strProp('kernel') },
+                  { name: 'arch', data: strProp('arm') },
+                  { name: 'os', data: strProp('linux') },
+                  { name: 'compression', data: strProp('none') },
+                  { name: 'load', data: u32Prop(0x40008000) },
+                  { name: 'entry', data: u32Prop(0x40008000) },
+                ],
+                children: [{
+                  name: 'hash-1',
+                  properties: [
+                    { name: 'algo', data: strProp('sha256') },
+                    { name: 'value', data: kernelHash },
+                  ],
+                  children: [],
+                }],
+              },
+              {
+                name: 'fdt-1',
+                properties: [
+                  { name: 'description', data: strProp('Device Tree') },
+                  { name: 'data', data: new Uint8Array(fdt) },
+                  { name: 'type', data: strProp('flat_dt') },
+                  { name: 'arch', data: strProp('arm') },
+                  { name: 'compression', data: strProp('none') },
+                ],
+                children: [{
+                  name: 'hash-1',
+                  properties: [
+                    { name: 'algo', data: strProp('sha256') },
+                    { name: 'value', data: fdtHash },
+                  ],
+                  children: [],
+                }],
+              },
+              {
+                name: 'ramdisk',
+                properties: [
+                  { name: 'description', data: strProp('Ramdisk') },
+                  { name: 'data', data: new Uint8Array(ramdisk) },
+                  { name: 'type', data: strProp('ramdisk') },
+                  { name: 'arch', data: strProp('arm') },
+                  { name: 'os', data: strProp('linux') },
+                  { name: 'compression', data: strProp('none') },
+                ],
+                children: [{
+                  name: 'hash-1',
+                  properties: [
+                    { name: 'algo', data: strProp('sha256') },
+                    { name: 'value', data: ramdiskHash },
+                  ],
+                  children: [],
+                }],
+              },
+            ],
+          },
+          {
+            name: 'configurations',
+            properties: [{ name: 'default', data: strProp('conf-1') }],
+            children: [{
+              name: 'conf-1',
+              properties: [
+                { name: 'description', data: strProp('Boot Config') },
+                { name: 'kernel', data: strProp('kernel') },
+                { name: 'fdt', data: strProp('fdt-1') },
+                { name: 'ramdisk', data: strProp('ramdisk') },
+              ],
+              children: [{
+                name: 'signature-1',
+                properties: [
+                  { name: 'algo', data: strProp('sha256,rsa2048') },
+                  { name: 'key-name-hint', data: strProp('dev') },
+                  { name: 'sign-images', data: enc.encode('kernel\0fdt\0ramdisk\0') },
+                  { name: 'hashed-nodes', data: enc.encode(
+                    '/\0/configurations/conf-1\0' +
+                    '/images/kernel\0/images/kernel/hash-1\0' +
+                    '/images/fdt-1\0/images/fdt-1/hash-1\0' +
+                    '/images/ramdisk\0/images/ramdisk/hash-1\0'
+                  )},
+                ],
+                children: [],
+              }],
+            }],
+          },
+        ],
+      },
+    };
+
+    const binary = FDT.serialize(tree);
+
+    // Bypass both kernel and ramdisk
+    const result = await FitOps.root(binary, {
+      changeDtModel: false,
+      replaceKernel: true,
+      kernelData: enc.encode('pwned kernel'),
+      appendInitramfs: true,
+      initramfsData: enc.encode('extra cpio'),
+    });
+
+    const outTree = FDT.parse(result);
+    const images = FDT.findNode(outTree.root, ['images']);
+
+    // Verify separate containers exist
+    const kernelOrig = images.children.find(c => c.name === 'orig-kernel');
+    const ramdiskOrig = images.children.find(c => c.name === 'orig-ramdisk');
+    assert.ok(kernelOrig, 'Expected orig-kernel container');
+    assert.ok(ramdiskOrig, 'Expected orig-ramdisk container');
+
+    // Verify ordering: orig-kernel should come before fdt-1,
+    // and orig-ramdisk should come after fdt-1
+    const names = images.children.map(c => c.name);
+    const kernelOrigIdx = names.indexOf('orig-kernel');
+    const fdtIdx = names.indexOf('fdt-1');
+    const ramdiskOrigIdx = names.indexOf('orig-ramdisk');
+
+    assert.ok(kernelOrigIdx < fdtIdx,
+      `orig-kernel (idx ${kernelOrigIdx}) should come before fdt-1 (idx ${fdtIdx})`);
+    assert.ok(ramdiskOrigIdx > fdtIdx,
+      `orig-ramdisk (idx ${ramdiskOrigIdx}) should come after fdt-1 (idx ${fdtIdx})`);
+
+    // Verify hashed-nodes point to correct containers
+    const sig = FDT.findNode(outTree.root, ['configurations', 'conf-1', 'signature-1']);
+    const hashedNodes = new TextDecoder().decode(FDT.getProperty(sig, 'hashed-nodes'));
+    assert.ok(hashedNodes.includes('/images/orig-kernel/kernel'),
+      'hashed-nodes should reference orig-kernel container');
+    assert.ok(hashedNodes.includes('/images/orig-ramdisk/ramdisk'),
+      'hashed-nodes should reference orig-ramdisk container');
+    assert.ok(!hashedNodes.includes('/images/kernel/'),
+      'hashed-nodes should NOT reference original kernel path');
   });
 });

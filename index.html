@@ -92,19 +92,22 @@
     </div>
 
     <section class="explainer">
-      <h2>Q &amp; A</h2>
       <dl class="qa">
         <dt>What is a FIT image?</dt>
-        <dd>A <strong>FIT (Flattened Image Tree)</strong> is a common boot format on embedded systems
-        for bundling kernel, device tree, and ramdisk images.
-        It uses the Device Tree Blob (DTB) binary format internally.
-        It's the native format of U-Boot, but is also implemented by other bootloaders
-        like barebox.</dd>
+        <dd>A <strong>FIT (Flattened Image Tree)</strong> bundles the kernel, device trees
+        and ramdisks an embedded system boots. Internally it is a Device Tree Blob (DTB).
+        It is the native boot format of <a href="https://u-boot-project.org/">Das
+        U-Boot</a>, and other bootloaders like <a href="https://www.barebox.org/">barebox</a>
+        support it too.</dd>
 
-        <dt>What does this tool do?</dt>
-        <dd>FIT supports cryptographic signatures to ensure image integrity, but
-        it requires parsing the device tree before signature verification is
-        possible. This complexity is error-prone.
+        <dt>Why is FIT security relevant?</dt>
+        <dd>Millions of embedded devices make use of FIT's support for cryptographic signatures to ensure image
+	integrity. Unfortunately, the security aspects of FIT are bolted onto the format and verification
+	can only happen after parsing the flattened device tree format. This complexity is error-prone.
+	</dt>
+
+        <dt>What does this website do?</dt>
+        <dd>
         This tool exploits the fact that prior to <b>FIXME</b> 2026.04.0, the parts of a
         FIT image that were hashed and the parts that were booted were
         allowed to differ. This enables:
