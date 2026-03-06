@@ -77,6 +77,20 @@
     progressBar.style.width = '0%';
     diskBuffer = null;
     diskFitInfo = null;
+
+    // Reset kernel/initramfs options so stale selections don't carry over
+    optKernel.checked = false;
+    kernelUpload.classList.add('hidden');
+    kernelFileInput.value = '';
+    kernelBuffer = null;
+    kernelFileName.textContent = 'No file selected';
+
+    optInitramfs.checked = false;
+    initramfsUpload.classList.add('hidden');
+    initramfsFileInput.value = '';
+    initramfsBuffer = null;
+    initramfsFileName.textContent = 'No file selected';
+
     showBeforeImage();
   }
 
