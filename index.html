@@ -26,47 +26,49 @@
           <p>Drag &amp; drop a FIT image here<br>or click to browse</p>
           <input type="file" id="file-input" accept=".fit,.itb,.img,.bin">
         </div>
+      </div>
+    </div>
 
-        <div id="progress-container" class="progress-container hidden">
-          <div id="progress-bar" class="progress-bar"></div>
-        </div>
+    <div class="full-width-panel">
+      <div id="progress-container" class="progress-container hidden">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
 
-        <div id="fit-info" class="fit-info hidden">
-          <h2>FIT Image Info</h2>
-          <div id="fit-info-content"></div>
-        </div>
+      <div id="fit-info" class="fit-info hidden">
+        <h2>FIT Image Info</h2>
+        <div id="fit-info-content"></div>
+      </div>
 
-        <div id="fit-select" class="fit-select hidden">
-          <h2>Multiple FIT images found</h2>
-          <p>Select which FIT image to modify:</p>
-          <div id="fit-select-list"></div>
-        </div>
+      <div id="fit-select" class="fit-select hidden">
+        <h2>Multiple FIT images found</h2>
+        <p>Select which FIT image to modify:</p>
+        <div id="fit-select-list"></div>
+      </div>
 
-        <div id="error-box" class="error-box hidden"></div>
+      <div id="error-box" class="error-box hidden"></div>
 
-        <div id="options" class="options hidden">
+      <div id="options" class="options hidden">
+        <label>
+          <input type="checkbox" id="opt-model" checked>
+          Change DT Model
+        </label>
+        <div class="kernel-option">
           <label>
-            <input type="checkbox" id="opt-model" checked>
-            Change DT Model
+            <input type="checkbox" id="opt-kernel">
+            Replace Kernel
           </label>
-          <div class="kernel-option">
-            <label>
-              <input type="checkbox" id="opt-kernel">
-              Replace Kernel
-            </label>
-            <div id="kernel-upload" class="kernel-upload hidden">
-              <button type="button" id="kernel-browse-btn" class="browse-btn">Browse...</button>
-              <input type="file" id="kernel-file-input">
-              <span id="kernel-file-name">No file selected</span>
-            </div>
+          <div id="kernel-upload" class="kernel-upload hidden">
+            <button type="button" id="kernel-browse-btn" class="browse-btn">Browse...</button>
+            <input type="file" id="kernel-file-input">
+            <span id="kernel-file-name">No file selected</span>
           </div>
         </div>
+      </div>
 
-        <button id="root-btn" class="root-btn hidden">root!</button>
+      <button id="root-btn" class="root-btn hidden">root!</button>
 
-        <div id="download-section" class="download-section hidden">
-          <a id="download-link" class="download-link">Download rooted FIT image</a>
-        </div>
+      <div id="download-section" class="download-section hidden">
+        <a id="download-link" class="download-link">Download rooted FIT image</a>
       </div>
     </div>
 

@@ -207,9 +207,11 @@
       }
     }
     let name = imageName;
-    const baseExt = typeExtMap[type] || '.bin';
-    const compExt = compExtMap[compression] || '';
-    name += baseExt + compExt;
+    if (!knownExts.some(ext => name.endsWith(ext))) {
+      const baseExt = typeExtMap[type] || '.bin';
+      const compExt = compExtMap[compression] || '';
+      name += baseExt + compExt;
+    }
     return name;
   }
 
@@ -245,17 +247,26 @@
       html += `<tr><td>Description</td><td colspan="3">${esc(result.description)}</td></tr>`;
     }
 
-    // Summary line: X images across Y configurations (N signed)
+    // Summary line: X images across Y [signed] configurations
     const sigResult = isRooted ? lastValidateResult : result;
     let summary = `${result.images.length} image${result.images.length !== 1 ? 's' : ''}`;
     if (result.numConfigs > 0) {
-      summary += ` across ${result.numConfigs} configuration${result.numConfigs !== 1 ? 's' : ''}`;
-    }
-    if (sigResult.hasSignatures) {
-      if (isRooted) {
-        summary += ` (<span class="badge-pwned">${sigResult.signatures.length} signed &mdash; bypassed</span>)`;
+      const allSigned = sigResult.numSignedConfigs === result.numConfigs && sigResult.hasSignatures;
+      if (allSigned) {
+        if (isRooted) {
+          summary += ` across <span class="badge-pwned">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''} &mdash; bypassed</span>`;
+        } else {
+          summary += ` across <span style="color:#e67e22;font-weight:bold">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}</span>`;
+        }
       } else {
-        summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.signatures.length} signed)</span>`;
+        summary += ` across ${result.numConfigs} configuration${result.numConfigs !== 1 ? 's' : ''}`;
+        if (sigResult.hasSignatures) {
+          if (isRooted) {
+            summary += ` (<span class="badge-pwned">${sigResult.numSignedConfigs} signed &mdash; bypassed</span>)`;
+          } else {
+            summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.numSignedConfigs} signed)</span>`;
+          }
+        }
       }
     }
     html += `<tr><td>Contents</td><td colspan="3">${summary}</td></tr>`;

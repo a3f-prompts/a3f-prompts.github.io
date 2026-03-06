@@ -107,8 +107,10 @@ const FitOps = (() => {
     }
     const hasSignatures = signatures.length > 0;
     const numConfigs = configsNode ? configsNode.children.length : 0;
+    const signedConfigs = new Set(signatures.map(s => s.config));
+    const numSignedConfigs = signedConfigs.size;
 
-    return { valid: true, tree, images, description: desc, signatures, hasSignatures, numConfigs, error: null };
+    return { valid: true, tree, images, description: desc, signatures, hasSignatures, numConfigs, numSignedConfigs, error: null };
   }
 
   /**
