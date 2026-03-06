@@ -4,13 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>fitfall.de — about FIT and pitfalls</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>ifitfitsisits.com</h1>
-      <p class="tagline">if it FITs, I sits</p>
+      <h1 class="annotated-title"><span class="wb" data-word="FIT"><span class="pun-f">f</span><span class="pun-p" aria-hidden="true">p</span>it</span><span class="wb" data-word="pitfall">fall</span><span class="tld">.de</span></h1>
     </header>
 
     <div class="main-panel">
@@ -34,6 +36,12 @@
           <div id="fit-info-content"></div>
         </div>
 
+        <div id="fit-select" class="fit-select hidden">
+          <h2>Multiple FIT images found</h2>
+          <p>Select which FIT image to modify:</p>
+          <div id="fit-select-list"></div>
+        </div>
+
         <div id="error-box" class="error-box hidden"></div>
 
         <div id="options" class="options hidden">
@@ -41,13 +49,16 @@
             <input type="checkbox" id="opt-model" checked>
             Change DT Model
           </label>
-          <label>
-            <input type="checkbox" id="opt-kernel">
-            Replace Kernel
-          </label>
-          <div id="kernel-upload" class="kernel-upload hidden">
-            <input type="file" id="kernel-file-input">
-            <span id="kernel-file-name">No file selected</span>
+          <div class="kernel-option">
+            <label>
+              <input type="checkbox" id="opt-kernel">
+              Replace Kernel
+            </label>
+            <div id="kernel-upload" class="kernel-upload hidden">
+              <button type="button" id="kernel-browse-btn" class="browse-btn">Browse...</button>
+              <input type="file" id="kernel-file-input">
+              <span id="kernel-file-name">No file selected</span>
+            </div>
           </div>
         </div>
 
@@ -62,34 +73,31 @@
     <section class="explainer">
       <h2>What is this?</h2>
       <p>
-        The <strong>FIT (Flattened Image Tree)</strong> format bundles kernel,
-        device tree, and ramdisk images for embedded Linux boot via U-Boot.
+        A <strong>FIT (Flattened Image Tree)</strong> is a common boot format on embedded systems
+        for bundling kernel, device tree, and ramdisk images.
         It uses the Device Tree Blob (DTB) binary format internally.
+        It's the native format of U-Boot, but is also implemented by other bootloaders
+        like barebox.
       </p>
       <p>
         FIT supports cryptographic signatures to ensure image integrity, but
-        verification must be actively enforced at every level. Common weaknesses include:
+        it requires parsing the device tree before signature verification is
+        possible. This complexity is error-prone.
       </p>
-      <ul>
-        <li><strong>Signatures disabled</strong> &mdash; <code>CONFIG_FIT_SIGNATURE</code> not enabled in U-Boot build</li>
-        <li><strong>Configuration signatures not required</strong> &mdash; unsigned configurations can load unsigned images (CVE-2020-10648)</li>
-        <li><strong>Unsigned images loaded without checks</strong> &mdash; individual image nodes lack signatures, only configuration is signed</li>
-      </ul>
       <p>
-        This tool demonstrates two modifications:
+        This tool exploits the fact that prior to <b>FIXME</b> 2026.04.0, the parts of a
+        FIT image that were hashed and the parts that were booted were
+        allowed to differ. This enables:
       </p>
       <ul>
         <li><strong>Model property manipulation</strong> &mdash; the nested device tree's <code>model</code> property is changed, proving the DTB can be modified</li>
-        <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, showing unsigned payloads can be substituted</li>
+        <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, allowing unsigned payloads to be substituted</li>
+        <li><strong>Spawn root shell (TODO)</strong> &mdash; an initramfs is injected that opens a root shell</li>
       </ul>
-      <p>
-        After modification, CRC32 and SHA-256 hashes are recalculated, but
-        signature nodes are removed (we don't have the private key &mdash;
-        that's the whole point).
-      </p>
       <p class="disclaimer">
-        Use responsibly and only on devices you own. This tool is for
-        educational and authorized security research purposes only.
+        Use responsibly and only on devices you own.<br>This tool is provided
+        &ldquo;as is&rdquo; without warranty of any kind, express or implied.<br>
+        The authors assume no liability for any damages resulting from its use.
       </p>
     </section>
 
@@ -100,6 +108,7 @@
 
   <script src="js/fdt-parser.js"></script>
   <script src="js/fit-ops.js"></script>
+  <script src="js/fit-scanner.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

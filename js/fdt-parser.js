@@ -298,6 +298,73 @@ const FDT = (() => {
     return false;
   }
 
+  /**
+   * Deep-clone a node (properties get new Uint8Array copies).
+   */
+  function cloneNode(node) {
+    return {
+      name: node.name,
+      properties: node.properties.map(p => ({
+        name: p.name,
+        data: new Uint8Array(p.data),
+      })),
+      children: node.children.map(c => cloneNode(c)),
+    };
+  }
+
+  /**
+   * Resolve external data references (data-offset/data-size or data-position)
+   * into inline data properties. For FIT images with external data layout.
+   */
+  function resolveExternalData(root, buffer) {
+    const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const extDataBase = dv.getUint32(4); // totalsize = start of external data
+
+    function resolve(node) {
+      const propMap = {};
+      for (const p of node.properties) {
+        propMap[p.name] = p;
+      }
+
+      const hasOffset = 'data-offset' in propMap;
+      const hasSize = 'data-size' in propMap;
+      const hasPosition = 'data-position' in propMap;
+
+      if (hasOffset || hasSize || hasPosition) {
+        let offset = null;
+        if (hasOffset) {
+          offset = extDataBase + new DataView(propMap['data-offset'].data.buffer,
+            propMap['data-offset'].data.byteOffset, 4).getUint32(0);
+        } else if (hasPosition) {
+          offset = new DataView(propMap['data-position'].data.buffer,
+            propMap['data-position'].data.byteOffset, 4).getUint32(0);
+        }
+
+        let size = null;
+        if (hasSize) {
+          size = new DataView(propMap['data-size'].data.buffer,
+            propMap['data-size'].data.byteOffset, 4).getUint32(0);
+        }
+
+        const drop = new Set(['data-offset', 'data-size', 'data-position']);
+        if (offset !== null && size !== null) {
+          const inlineData = new Uint8Array(u8.slice(offset, offset + size));
+          node.properties = node.properties.filter(p => !drop.has(p.name));
+          node.properties.push({ name: 'data', data: inlineData });
+        } else {
+          node.properties = node.properties.filter(p => !drop.has(p.name));
+        }
+      }
+
+      for (const child of node.children) {
+        resolve(child);
+      }
+    }
+
+    resolve(root);
+  }
+
   return {
     MAGIC,
     TOKEN,
@@ -308,6 +375,8 @@ const FDT = (() => {
     setProperty,
     getStringProperty,
     removeChild,
+    cloneNode,
+    resolveExternalData,
     align4,
   };
 })();

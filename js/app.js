@@ -21,9 +21,15 @@
   const downloadLink = document.getElementById('download-link');
   const catArt = document.querySelector('.cat-art');
 
-  let fitBuffer = null;
+  const fitSelect = document.getElementById('fit-select');
+  const fitSelectList = document.getElementById('fit-select-list');
+
+  let fitBuffer = null;       // The FIT image data (extracted or direct)
+  let diskBuffer = null;      // Original disk image (null if file was a plain FIT)
+  let diskFitInfo = null;     // { offset, totalsize } if extracted from disk image
   let kernelBuffer = null;
   let fitFileName = 'image.fit';
+  let lastValidateResult = null;
 
   // --- Cat image switching ---
   const catImgBefore = document.getElementById('cat-img-before');
@@ -56,12 +62,15 @@
 
   function resetUI() {
     fitInfo.classList.add('hidden');
+    fitSelect.classList.add('hidden');
     options.classList.add('hidden');
     rootBtn.classList.add('hidden');
     downloadSection.classList.add('hidden');
     hideError();
     progressContainer.classList.add('hidden');
     progressBar.style.width = '0%';
+    diskBuffer = null;
+    diskFitInfo = null;
     showBeforeImage();
   }
 
@@ -103,10 +112,10 @@
     animateProgress(60, 300);
 
     reader.onload = () => {
-      fitBuffer = reader.result;
+      const buf = reader.result;
       animateProgress(100, 200).then(() => {
         showAfterImage();
-        parseFit();
+        tryParseFitOrDisk(buf);
       });
     };
 
@@ -117,14 +126,84 @@
     reader.readAsArrayBuffer(file);
   }
 
-  function parseFit() {
-    const result = FitOps.validate(fitBuffer);
-    if (!result.valid) {
-      showError(result.error);
+  function tryParseFitOrDisk(buf) {
+    // First, try as a plain FIT image
+    const directResult = FitOps.validate(buf);
+    if (directResult.valid) {
+      fitBuffer = buf;
+      diskBuffer = null;
+      diskFitInfo = null;
+      parseFit();
       return;
     }
 
-    // Build info table
+    // Not a valid FIT — scan for embedded FIT images in a disk image
+    const fits = FitScanner.scan(buf);
+    if (fits.length === 0) {
+      showError(directResult.error);
+      return;
+    }
+
+    if (fits.length === 1) {
+      selectFitFromDisk(buf, fits[0]);
+      return;
+    }
+
+    // Multiple FITs — let user choose
+    showFitSelection(buf, fits);
+  }
+
+  function selectFitFromDisk(buf, info) {
+    diskBuffer = buf;
+    diskFitInfo = info;
+    fitBuffer = FitScanner.extract(buf, info.offset, info.totalsize).buffer;
+    parseFit();
+  }
+
+  function showFitSelection(buf, fits) {
+    fitSelectList.innerHTML = '';
+    for (let i = 0; i < fits.length; i++) {
+      const fit = fits[i];
+      const btn = document.createElement('button');
+      btn.className = 'fit-select-btn';
+      btn.innerHTML =
+        `<strong>FIT #${i + 1}</strong> — ` +
+        `offset 0x${fit.offset.toString(16)}, ` +
+        `${formatSize(fit.totalsize)}` +
+        (fit.description ? ` — ${esc(fit.description)}` : '');
+      btn.addEventListener('click', () => {
+        fitSelect.classList.add('hidden');
+        selectFitFromDisk(buf, fit);
+      });
+      fitSelectList.appendChild(btn);
+    }
+    fitSelect.classList.remove('hidden');
+  }
+
+  function downloadImageData(tree, imageName) {
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    if (!imagesNode) return;
+    const imgNode = imagesNode.children.find(c => c.name === imageName);
+    if (!imgNode) return;
+    const data = FDT.getProperty(imgNode, 'data');
+    if (!data) return;
+    const blob = new Blob([data], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = imageName + '.bin';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderImageTable(result, opts) {
+    const isRooted = !!opts;
+    const modifiedTypes = new Set();
+    if (opts) {
+      if (opts.changeDtModel) modifiedTypes.add('flat_dt');
+      if (opts.replaceKernel) modifiedTypes.add('kernel');
+    }
+
     let html = '<table>';
     if (result.description) {
       html += `<tr><td>Description</td><td>${esc(result.description)}</td></tr>`;
@@ -132,14 +211,49 @@
     html += `<tr><td>Images</td><td>${result.images.length}</td></tr>`;
 
     for (const img of result.images) {
-      html += `<tr><td>&nbsp;&nbsp;${esc(img.name)}</td><td>${esc(img.type)} &mdash; ${formatSize(img.size)}`;
+      const rowClass = img.isOrig ? ' class="row-orig"' : '';
+      const nameHtml = img.isOrig
+        ? `&nbsp;&nbsp;${esc(img.name)}`
+        : `&nbsp;&nbsp;<a class="img-download" data-img="${esc(img.name)}">${esc(img.name)}</a>`;
+      html += `<tr${rowClass}><td>${nameHtml}</td><td>${esc(img.type)} &mdash; ${formatSize(img.size)}`;
       if (img.description) html += ` &mdash; ${esc(img.description)}`;
       if (img.compression !== 'none') html += ` (${esc(img.compression)})`;
+      if (isRooted && !img.isOrig) {
+        const isPwned = img.description.includes('(Pwnd)') || modifiedTypes.has(img.type);
+        if (isPwned) html += ' <span class="badge-pwned">pwned</span>';
+      }
       html += '</td></tr>';
+    }
+
+    const sigResult = isRooted ? lastValidateResult : result;
+    if (sigResult.hasSignatures) {
+      if (isRooted) {
+        html += `<tr><td>Signatures</td><td><span class="badge-pwned">${sigResult.signatures.length} bypassed</span></td></tr>`;
+      } else {
+        html += `<tr><td>Signatures</td><td style="color:#e67e22;font-weight:bold">${sigResult.signatures.length} found</td></tr>`;
+      }
     }
     html += '</table>';
 
     fitInfoContent.innerHTML = html;
+
+    // Bind click handlers for image download links
+    fitInfoContent.querySelectorAll('.img-download').forEach(a => {
+      a.addEventListener('click', () => {
+        downloadImageData(result.tree, a.dataset.img);
+      });
+    });
+  }
+
+  function parseFit() {
+    const result = FitOps.validate(fitBuffer);
+    if (!result.valid) {
+      showError(result.error);
+      return;
+    }
+    lastValidateResult = result;
+
+    renderImageTable(result, null);
     fitInfo.classList.remove('hidden');
     options.classList.remove('hidden');
     rootBtn.classList.remove('hidden');
@@ -149,6 +263,12 @@
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+  }
+
+  function showRootedInfo(outputBuffer, opts) {
+    const result = FitOps.validate(outputBuffer);
+    if (!result.valid) return;
+    renderImageTable(result, opts);
   }
 
   // --- Drag and drop ---
@@ -190,6 +310,10 @@
     }
   });
 
+  document.getElementById('kernel-browse-btn').addEventListener('click', () => {
+    kernelFileInput.click();
+  });
+
   kernelFileInput.addEventListener('change', () => {
     if (kernelFileInput.files.length > 0) {
       const file = kernelFileInput.files[0];
@@ -215,6 +339,7 @@
         changeDtModel: optModel.checked,
         replaceKernel: optKernel.checked,
         kernelData: kernelBuffer,
+        signatureBypass: true,
       };
 
       if (opts.replaceKernel && !opts.kernelData) {
@@ -229,12 +354,24 @@
 
       await animateProgress(100, 200);
 
-      // Create download
-      const blob = new Blob([result], { type: 'application/octet-stream' });
+      // Re-validate the output to show updated info
+      showRootedInfo(result, opts);
+
+      // Create download — splice back into disk image if applicable
+      let outputData;
+      let outputExt;
+      if (diskBuffer && diskFitInfo) {
+        outputData = FitScanner.splice(diskBuffer, diskFitInfo.offset, diskFitInfo.totalsize, result);
+        outputExt = '-bypassed' + (fitFileName.includes('.') ? fitFileName.replace(/^.*(\.[^.]+)$/, '$1') : '.img');
+      } else {
+        outputData = result;
+        outputExt = '-bypassed.fit';
+      }
+      const blob = new Blob([outputData], { type: 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
       const baseName = fitFileName.replace(/\.[^.]+$/, '');
       downloadLink.href = url;
-      downloadLink.download = baseName + '-rooted.fit';
+      downloadLink.download = baseName + outputExt;
       downloadSection.classList.remove('hidden');
     } catch (e) {
       showError(e.message);
