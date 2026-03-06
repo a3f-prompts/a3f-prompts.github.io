@@ -29,6 +29,12 @@
   const fitSelectList = document.getElementById('fit-select-list');
   const fitConfigContent = document.getElementById('fit-config-content');
 
+  const debugMode = new URLSearchParams(window.location.search).has('debug');
+  const debugOptions = document.getElementById('debug-options');
+  const optRecomputeHashes = document.getElementById('opt-recompute-hashes');
+  const optRedirectSignatures = document.getElementById('opt-redirect-signatures');
+  if (debugMode) debugOptions.classList.remove('hidden');
+
   let fitBuffer = null;       // The FIT image data (extracted or direct)
   let diskBuffer = null;      // Original disk image (null if file was a plain FIT)
   let diskFitInfo = null;     // { offset, totalsize } if extracted from disk image
@@ -551,7 +557,8 @@
         kernelData: kernelBuffer,
         appendInitramfs: optInitramfs.checked,
         initramfsData: initramfsBuffer,
-        signatureBypass: true,
+        recomputeHashes: !debugMode || optRecomputeHashes.checked,
+        redirectSignatures: !debugMode || optRedirectSignatures.checked,
       };
 
       if (opts.replaceKernel && !opts.kernelData) {

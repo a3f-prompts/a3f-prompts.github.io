@@ -307,6 +307,12 @@ header h1 {
   accent-color: #ff6a00;
 }
 
+.debug-separator {
+  border: none;
+  border-top: 1px dashed #555;
+  margin: 0.6rem 0 0.2rem;
+}
+
 .option-disabled {
   opacity: 0.4;
   cursor: not-allowed;

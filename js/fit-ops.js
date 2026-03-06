@@ -351,7 +351,9 @@ const FitOps = (() => {
    * nodes, which is critical because fdt_find_regions walks the FDT linearly
    * and the concatenated hash input must match the original region order.
    */
-  async function bypassSignature(tree, targetNodeName, newData) {
+  async function bypassSignature(tree, targetNodeName, newData, opts) {
+    const recomputeHashes = !opts || opts.recomputeHashes !== false;
+    const redirectSignatures = !opts || opts.redirectSignatures !== false;
     const imagesNode = FDT.findNode(tree.root, ['images']);
     if (!imagesNode) throw new Error('No /images node');
 
@@ -392,11 +394,15 @@ const FitOps = (() => {
     }
 
     // Recalculate hashes for the modified node
-    const data = FDT.getProperty(targetNode, 'data');
-    await recalcHashesForNode(targetNode, data);
+    if (recomputeHashes) {
+      const data = FDT.getProperty(targetNode, 'data');
+      await recalcHashesForNode(targetNode, data);
+    }
 
     // Redirect signature references
-    fixupSignatures(tree, targetNodeName, containerName);
+    if (redirectSignatures) {
+      fixupSignatures(tree, targetNodeName, containerName);
+    }
   }
 
   /**
@@ -445,7 +451,7 @@ const FitOps = (() => {
         FDT.setProperty(innerTree.root, 'model', origModel + ' [rooted by ifitfitsisits.com]');
         const newDtData = FDT.serialize(innerTree);
 
-        await bypassSignature(tree, fdtImg.name, newDtData);
+        await bypassSignature(tree, fdtImg.name, newDtData, options);
       }
     }
 
@@ -453,7 +459,7 @@ const FitOps = (() => {
       const kernelImages = findAllKernelImages(tree);
       if (kernelImages.length === 0) throw new Error('No kernel image found in FIT');
       for (const kernelImg of kernelImages) {
-        await bypassSignature(tree, kernelImg.name, new Uint8Array(options.kernelData));
+        await bypassSignature(tree, kernelImg.name, new Uint8Array(options.kernelData), options);
       }
     }
 
@@ -477,7 +483,7 @@ const FitOps = (() => {
         combined.set(existingData, 0);
         combined.set(appendData, existingData.byteLength);
 
-        await bypassSignature(tree, ramdiskImg.name, combined);
+        await bypassSignature(tree, ramdiskImg.name, combined, options);
       }
     }
 
