@@ -106,8 +106,9 @@ const FitOps = (() => {
       }
     }
     const hasSignatures = signatures.length > 0;
+    const numConfigs = configsNode ? configsNode.children.length : 0;
 
-    return { valid: true, tree, images, description: desc, signatures, hasSignatures, error: null };
+    return { valid: true, tree, images, description: desc, signatures, hasSignatures, numConfigs, error: null };
   }
 
   /**

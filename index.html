@@ -71,29 +71,41 @@
     </div>
 
     <section class="explainer">
-      <h2>What is this?</h2>
-      <p>
-        A <strong>FIT (Flattened Image Tree)</strong> is a common boot format on embedded systems
+      <h2>Q &amp; A</h2>
+      <dl class="qa">
+        <dt>What is a FIT image?</dt>
+        <dd>A <strong>FIT (Flattened Image Tree)</strong> is a common boot format on embedded systems
         for bundling kernel, device tree, and ramdisk images.
         It uses the Device Tree Blob (DTB) binary format internally.
         It's the native format of U-Boot, but is also implemented by other bootloaders
-        like barebox.
-      </p>
-      <p>
-        FIT supports cryptographic signatures to ensure image integrity, but
+        like barebox.</dd>
+
+        <dt>What does this tool do?</dt>
+        <dd>FIT supports cryptographic signatures to ensure image integrity, but
         it requires parsing the device tree before signature verification is
         possible. This complexity is error-prone.
-      </p>
-      <p>
         This tool exploits the fact that prior to <b>FIXME</b> 2026.04.0, the parts of a
         FIT image that were hashed and the parts that were booted were
         allowed to differ. This enables:
-      </p>
-      <ul>
-        <li><strong>Model property manipulation</strong> &mdash; the nested device tree's <code>model</code> property is changed, proving the DTB can be modified</li>
-        <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, allowing unsigned payloads to be substituted</li>
-        <li><strong>Spawn root shell (TODO)</strong> &mdash; an initramfs is injected that opens a root shell</li>
-      </ul>
+          <ul>
+            <li><strong>Model property manipulation</strong> &mdash; the nested device tree's <code>model</code> property is changed, proving the DTB can be modified</li>
+            <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, allowing unsigned payloads to be substituted</li>
+            <li><strong>Spawn root shell (TODO)</strong> &mdash; an initramfs is injected that opens a root shell</li>
+          </ul>
+        </dd>
+
+        <dt>Why do some images not have a signed configuration?</dt>
+        <dd>Not every image in a FIT belongs to a verified boot chain, and some are verified
+        by other means: individually <span class="badge-x509">X.509</span> signed, or
+        authenticated as one blob from outside the FIT, e.g. by i.MX 
+        <span class="badge-hab">HAB</span> (High Assurance Boot).</dd>
+
+        <dt>Where can I learn more?</dt>
+        <dd>This site goes with the talk <a href="https://osselceu2026.sched.com/event/2RaWy/fit-happens-how-secure-boot-wasnt-ahmad-fatoum-pengutronix-ek"><b>FIT Happens: How Secure
+        Boot Wasn't</b></a> at Embedded Linux Conference Europe 2026, which walks
+	through some of these pitfalls and their fixes.
+        The slides are linked from the event page.</dd>
+      </dl>
       <p class="disclaimer">
         Use responsibly and only on devices you own.<br>This tool is provided
         &ldquo;as is&rdquo; without warranty of any kind, express or implied.<br>

@@ -369,6 +369,37 @@ header h1 {
   color: #aaa;
 }
 
+.qa {
+  margin-bottom: 1rem;
+}
+
+.qa dt {
+  font-weight: 600;
+  color: #d0d0d0;
+  font-size: 0.9rem;
+  margin-bottom: 0.3rem;
+  margin-top: 1rem;
+}
+
+.qa dt:first-child {
+  margin-top: 0;
+}
+
+.qa dd {
+  font-size: 0.9rem;
+  color: #aaa;
+  margin-left: 0;
+  margin-bottom: 0.5rem;
+}
+
+.qa dd p {
+  margin: 0 0 0.6rem;
+}
+
+.qa dd p:last-child {
+  margin-bottom: 0;
+}
+
 .explainer ul {
   margin: 0.5rem 0 1rem 1.5rem;
   font-size: 0.9rem;

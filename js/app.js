@@ -180,6 +180,39 @@
     fitSelect.classList.remove('hidden');
   }
 
+  const typeExtMap = {
+    flat_dt: '.dtb',
+    ramdisk: '.cpio',
+    kernel: '.bin',
+    kernel_noload: '.bin',
+  };
+
+  const compExtMap = {
+    gzip: '.gz',
+    bzip2: '.bz2',
+    lzma: '.lzma',
+    lzo: '.lzo',
+    lz4: '.lz4',
+    zstd: '.zst',
+  };
+
+  const knownExts = ['.dtb', '.cpio', '.bin', '.img', '.gz', '.bz2', '.lzma', '.lzo', '.lz4', '.zst', '.zstd', '.xz'];
+
+  function artifactName(imageName, type, compression, description) {
+    // If description contains a filename with a known extension, use it
+    if (description) {
+      const words = description.split(/\s+/);
+      for (const w of words) {
+        if (knownExts.some(ext => w.endsWith(ext))) return w;
+      }
+    }
+    let name = imageName;
+    const baseExt = typeExtMap[type] || '.bin';
+    const compExt = compExtMap[compression] || '';
+    name += baseExt + compExt;
+    return name;
+  }
+
   function downloadImageData(tree, imageName) {
     const imagesNode = FDT.findNode(tree.root, ['images']);
     if (!imagesNode) return;
@@ -187,11 +220,14 @@
     if (!imgNode) return;
     const data = FDT.getProperty(imgNode, 'data');
     if (!data) return;
+    const type = FDT.getStringProperty(imgNode, 'type') || '';
+    const compression = FDT.getStringProperty(imgNode, 'compression') || 'none';
+    const desc = FDT.getStringProperty(imgNode, 'description') || '';
     const blob = new Blob([data], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = imageName + '.bin';
+    a.download = artifactName(imageName, type, compression, desc);
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -206,33 +242,43 @@
 
     let html = '<table>';
     if (result.description) {
-      html += `<tr><td>Description</td><td>${esc(result.description)}</td></tr>`;
+      html += `<tr><td>Description</td><td colspan="3">${esc(result.description)}</td></tr>`;
     }
-    html += `<tr><td>Images</td><td>${result.images.length}</td></tr>`;
+
+    // Summary line: X images across Y configurations (N signed)
+    const sigResult = isRooted ? lastValidateResult : result;
+    let summary = `${result.images.length} image${result.images.length !== 1 ? 's' : ''}`;
+    if (result.numConfigs > 0) {
+      summary += ` across ${result.numConfigs} configuration${result.numConfigs !== 1 ? 's' : ''}`;
+    }
+    if (sigResult.hasSignatures) {
+      if (isRooted) {
+        summary += ` (<span class="badge-pwned">${sigResult.signatures.length} signed &mdash; bypassed</span>)`;
+      } else {
+        summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.signatures.length} signed)</span>`;
+      }
+    }
+    html += `<tr><td>Contents</td><td colspan="3">${summary}</td></tr>`;
 
     for (const img of result.images) {
       const rowClass = img.isOrig ? ' class="row-orig"' : '';
       const nameHtml = img.isOrig
         ? `&nbsp;&nbsp;${esc(img.name)}`
         : `&nbsp;&nbsp;<a class="img-download" data-img="${esc(img.name)}">${esc(img.name)}</a>`;
-      html += `<tr${rowClass}><td>${nameHtml}</td><td>${esc(img.type)} &mdash; ${formatSize(img.size)}`;
-      if (img.description) html += ` &mdash; ${esc(img.description)}`;
-      if (img.compression !== 'none') html += ` (${esc(img.compression)})`;
+
+      let typeStr = esc(img.type);
+      if (img.compression !== 'none') typeStr += ` (${esc(img.compression)})`;
+
+      let extra = '';
+      if (img.description) extra = esc(img.description);
       if (isRooted && !img.isOrig) {
         const isPwned = img.description.includes('(Pwnd)') || modifiedTypes.has(img.type);
-        if (isPwned) html += ' <span class="badge-pwned">pwned</span>';
+        if (isPwned) extra += ' <span class="badge-pwned">pwned</span>';
       }
-      html += '</td></tr>';
+
+      html += `<tr${rowClass}><td>${nameHtml}</td><td>${typeStr}</td><td>${formatSize(img.size)}</td><td>${extra}</td></tr>`;
     }
 
-    const sigResult = isRooted ? lastValidateResult : result;
-    if (sigResult.hasSignatures) {
-      if (isRooted) {
-        html += `<tr><td>Signatures</td><td><span class="badge-pwned">${sigResult.signatures.length} bypassed</span></td></tr>`;
-      } else {
-        html += `<tr><td>Signatures</td><td style="color:#e67e22;font-weight:bold">${sigResult.signatures.length} found</td></tr>`;
-      }
-    }
     html += '</table>';
 
     fitInfoContent.innerHTML = html;
