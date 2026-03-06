@@ -58,7 +58,7 @@
       <div id="options" class="options hidden">
         <label>
           <input type="checkbox" id="opt-model" checked>
-          Change DT Model
+          Change DT <code>/model</code>
         </label>
         <div class="kernel-option">
           <label>
@@ -112,7 +112,7 @@
         FIT image that were hashed and the parts that were booted were
         allowed to differ. This enables:
           <ul>
-            <li><strong>Model property manipulation</strong> &mdash; the nested device tree's <code>model</code> property is changed, proving the DTB can be modified</li>
+            <li><strong><code>/model</code> property manipulation</strong> &mdash; the nested device tree's top-level <code>/model</code> property is changed, proving the DTB can be modified</li>
             <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, allowing unsigned payloads to be substituted</li>
             <li><strong>Spawn root shell (TODO)</strong> &mdash; an initramfs is injected that opens a root shell</li>
           </ul>

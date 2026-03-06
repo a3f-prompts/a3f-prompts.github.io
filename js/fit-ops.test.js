@@ -334,6 +334,28 @@ describe('DT model change', () => {
     const origFdt = origNode.children.find(c => c.name === 'fdt-1');
     assert.ok(origFdt, 'Expected /images/orig-fdt-1/fdt-1');
   });
+
+  it('/model in modified DTB differs from /model in original DTB', async () => {
+    const { binary } = await buildTestFit();
+    const result = await FitOps.root(binary, { changeDtModel: true, replaceKernel: false });
+    const tree = FDT.parse(result);
+
+    // Extract /model from the modified fdt-1 data
+    const fdtImg = FDT.findNode(tree.root, ['images', 'fdt-1']);
+    const modifiedDtb = FDT.getProperty(fdtImg, 'data');
+    const modifiedTree = FDT.parse(modifiedDtb);
+    const newModel = FDT.getStringProperty(modifiedTree.root, 'model');
+
+    // Extract /model from the original fdt-1 preserved in orig container
+    const origFdt = FDT.findNode(tree.root, ['images', 'orig-fdt-1', 'fdt-1']);
+    const origDtb = FDT.getProperty(origFdt, 'data');
+    const origTree = FDT.parse(origDtb);
+    const origModel = FDT.getStringProperty(origTree.root, 'model');
+
+    assert.equal(origModel, 'Test Board', 'Original /model should be preserved');
+    assert.equal(newModel, 'rooted by ifitfitsisits.com', 'Modified /model should indicate rooting');
+    assert.notEqual(origModel, newModel, '/model must differ between original and modified DTBs');
+  });
 });
 
 // ---------------------------------------------------------------------------
