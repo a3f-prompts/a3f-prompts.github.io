@@ -88,7 +88,8 @@ const FitOps = (() => {
       const size = data ? data.byteLength : 0;
       const compression = FDT.getStringProperty(img, 'compression') || 'none';
       const arch = FDT.getStringProperty(img, 'arch') || '';
-      return { name: img.name, type, description: desc, size, compression, arch, isOrig };
+      const isX509 = data && data.byteLength >= 2 && data[0] === 0x30 && data[1] === 0x82;
+      return { name: img.name, type, description: desc, size, compression, arch, isOrig, isX509 };
     });
 
     const desc = FDT.getStringProperty(tree.root, 'description') || '';

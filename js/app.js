@@ -81,8 +81,16 @@
     hideError();
     progressContainer.classList.add('hidden');
     progressBar.style.width = '0%';
+    fitBuffer = null;
     diskBuffer = null;
     diskFitInfo = null;
+    lastValidateResult = null;
+
+    // Revoke previous download blob URL to free memory
+    if (downloadLink.href && downloadLink.href.startsWith('blob:')) {
+      URL.revokeObjectURL(downloadLink.href);
+    }
+    downloadLink.href = '';
 
     // Reset kernel/initramfs options so stale selections don't carry over
     optKernel.checked = false;
@@ -311,6 +319,7 @@
       let extra = '';
       if (img.description) extra = esc(img.description);
       if (img.arch && (img.type === 'kernel' || img.type === 'kernel_noload')) extra += ` (${esc(img.arch)})`;
+      if (img.isX509) extra += ' <span class="badge-x509">X.509</span>';
       if (isRooted && !img.isOrig) {
         const isPwned = img.description.includes('(Pwnd)') || modifiedTypes.has(img.type);
         if (isPwned) extra += ' <span class="badge-pwned">pwned</span>';

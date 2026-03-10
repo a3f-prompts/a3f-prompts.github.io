@@ -819,6 +819,102 @@ async function buildMultiConfigFit() {
 }
 
 // ---------------------------------------------------------------------------
+// X.509 header magic detection
+// ---------------------------------------------------------------------------
+describe('X.509 detection', () => {
+  it('image with 0x30 0x82 header is flagged as X.509', async () => {
+    // Build a FIT with a firmware image whose data starts with X.509 DER magic
+    const x509Data = new Uint8Array(64);
+    x509Data[0] = 0x30;  // ASN.1 SEQUENCE
+    x509Data[1] = 0x82;  // 2-byte length follows
+    x509Data[2] = 0x00;
+    x509Data[3] = 0x3C;  // length = 60
+
+    const { binary } = await buildTestFit();
+    // Parse, add an X.509 image, re-serialize
+    const tree = FDT.parse(binary);
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const enc = new TextEncoder();
+    imagesNode.children.push({
+      name: 'firmware-1',
+      properties: [
+        { name: 'description', data: enc.encode('OP-TEE with X.509\0') },
+        { name: 'data', data: x509Data },
+        { name: 'type', data: enc.encode('firmware\0') },
+        { name: 'compression', data: enc.encode('none\0') },
+      ],
+      children: [],
+    });
+    const modified = FDT.serialize(tree);
+
+    const result = FitOps.validate(modified);
+    assert.equal(result.valid, true);
+
+    const firmware = result.images.find(i => i.name === 'firmware-1');
+    assert.ok(firmware, 'Expected firmware-1 image');
+    assert.equal(firmware.isX509, true, 'firmware-1 should be flagged as X.509');
+  });
+
+  it('normal kernel image is not flagged as X.509', async () => {
+    const { binary } = await buildTestFit();
+    const result = FitOps.validate(binary);
+    const kernel = result.images.find(i => i.name === 'kernel');
+    assert.ok(kernel);
+    assert.equal(kernel.isX509, false, 'kernel should not be flagged as X.509');
+  });
+
+  it('image with only first byte 0x30 is not flagged as X.509', async () => {
+    const almostX509 = new Uint8Array(64);
+    almostX509[0] = 0x30;
+    almostX509[1] = 0x00;  // not 0x82
+
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const enc = new TextEncoder();
+    imagesNode.children.push({
+      name: 'not-x509',
+      properties: [
+        { name: 'description', data: enc.encode('Not X.509\0') },
+        { name: 'data', data: almostX509 },
+        { name: 'type', data: enc.encode('firmware\0') },
+        { name: 'compression', data: enc.encode('none\0') },
+      ],
+      children: [],
+    });
+    const modified = FDT.serialize(tree);
+
+    const result = FitOps.validate(modified);
+    const img = result.images.find(i => i.name === 'not-x509');
+    assert.ok(img);
+    assert.equal(img.isX509, false, 'Should not be flagged as X.509 without 0x82 second byte');
+  });
+
+  it('empty image data is not flagged as X.509', async () => {
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const enc = new TextEncoder();
+    imagesNode.children.push({
+      name: 'empty-img',
+      properties: [
+        { name: 'description', data: enc.encode('Empty\0') },
+        { name: 'data', data: new Uint8Array(0) },
+        { name: 'type', data: enc.encode('firmware\0') },
+        { name: 'compression', data: enc.encode('none\0') },
+      ],
+      children: [],
+    });
+    const modified = FDT.serialize(tree);
+
+    const result = FitOps.validate(modified);
+    const img = result.images.find(i => i.name === 'empty-img');
+    assert.ok(img);
+    assert.equal(img.isX509, false, 'Empty data should not be flagged as X.509');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Multi-configuration coverage
 // ---------------------------------------------------------------------------
 describe('Multi-configuration coverage', () => {

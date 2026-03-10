@@ -7,6 +7,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="favicon-96x96.png" sizes="96x96">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="shortcut icon" href="favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -116,6 +121,12 @@
 	integrity. Unfortunately, the security aspects of FIT are bolted onto the format and verification
 	can only happen after parsing the flattened device tree format. This complexity is error-prone.
 	</dt>
+
+        <dt>Why do some images not have a signed configuration?</dt>
+        <dd>Not all images in a FIT need to be part of a verified boot chain.
+        Some images may be verified by other means: they can be individually
+        X.509 signed (shown with an <span style="color:#ee0;font-weight:bold">X.509</span> badge) or the entire FIT
+        may be authenticated as a whole, e.g. via i.MX High Assurance Boot (HAB).</dd>
 
         <dt>What does this website do?</dt>
         <dd>
