@@ -42,6 +42,7 @@
   let initramfsBuffer = null;
   let fitFileName = 'image.fit';
   let lastValidateResult = null;
+  let hasHAB = false;
 
   // --- Cat image switching ---
   const catImgBefore = document.getElementById('cat-img-before');
@@ -85,6 +86,7 @@
     diskBuffer = null;
     diskFitInfo = null;
     lastValidateResult = null;
+    hasHAB = false;
 
     // Revoke previous download blob URL to free memory
     if (downloadLink.href && downloadLink.href.startsWith('blob:')) {
@@ -106,6 +108,34 @@
     initramfsFileName.textContent = 'No file selected';
 
     showBeforeImage();
+  }
+
+  /**
+   * Rudimentary HAB (High Assurance Boot) detection.
+   * Checks for an IVT header at fitOffset + 0x1000 in the raw buffer.
+   * IVT: tag=0xD1, length=0x0020 (BE), version & 0xF0 == 0x40,
+   *       reserved1 == 0, reserved2 == 0.
+   */
+  function detectHAB(buf, fitOffset) {
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    const ivtOff = fitOffset + 0x1000;
+    if (ivtOff + 32 > u8.byteLength) return false;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+
+    const tag = u8[ivtOff];
+    const len = (u8[ivtOff + 1] << 8) | u8[ivtOff + 2];
+    const ver = u8[ivtOff + 3];
+
+    if (tag !== 0xD1) return false;
+    if (len !== 0x0020) return false;
+    if ((ver & 0xF0) !== 0x40) return false;
+
+    // reserved1 at offset 8, reserved2 at offset 28 (little-endian uint32)
+    const reserved1 = dv.getUint32(ivtOff + 8, true);
+    const reserved2 = dv.getUint32(ivtOff + 28, true);
+    if (reserved1 !== 0 || reserved2 !== 0) return false;
+
+    return true;
   }
 
   function formatSize(bytes) {
@@ -167,6 +197,7 @@
       fitBuffer = buf;
       diskBuffer = null;
       diskFitInfo = null;
+      hasHAB = detectHAB(buf, 0);
       parseFit();
       return;
     }
@@ -191,6 +222,7 @@
     diskBuffer = buf;
     diskFitInfo = info;
     fitBuffer = FitScanner.extract(buf, info.offset, info.totalsize).buffer;
+    hasHAB = detectHAB(buf, info.offset);
     parseFit();
   }
 
@@ -305,6 +337,7 @@
         }
       }
     }
+    if (hasHAB) summary += ' <span class="badge-hab">HAB</span>';
     html += `<tr><td>Contents</td><td colspan="3">${summary}</td></tr>`;
 
     for (const img of result.images) {

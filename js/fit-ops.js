@@ -85,7 +85,10 @@ const FitOps = (() => {
       const type = isOrig ? 'exploit artifact' : (FDT.getStringProperty(img, 'type') || 'unknown');
       const desc = FDT.getStringProperty(img, 'description') || '';
       const data = FDT.getProperty(img, 'data');
-      const size = data ? data.byteLength : 0;
+      const dataSizeProp = FDT.getProperty(img, 'data-size');
+      const size = data ? data.byteLength
+        : dataSizeProp ? new DataView(dataSizeProp.buffer, dataSizeProp.byteOffset, 4).getUint32(0)
+        : 0;
       const compression = FDT.getStringProperty(img, 'compression') || 'none';
       const arch = FDT.getStringProperty(img, 'arch') || '';
       const isX509 = data && data.byteLength >= 2 && data[0] === 0x30 && data[1] === 0x82;
