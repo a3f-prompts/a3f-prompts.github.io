@@ -608,6 +608,21 @@ footer {
   vertical-align: middle;
 }
 
+.badge-vab {
+  display: inline-block;
+  background: #2a2a00;
+  border: 1px solid #cc0;
+  color: #ee0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+
 .badge-pwned {
   display: inline-block;
   background: #1a3a1a;

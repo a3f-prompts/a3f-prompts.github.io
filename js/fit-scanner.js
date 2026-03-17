@@ -43,7 +43,15 @@ const FitScanner = (() => {
    */
   function extractDescription(dv, u8, offset, totalsize) {
     try {
-      const slice = u8.slice(offset, offset + Math.min(totalsize, 4096));
+      // Read header to determine required size (struct + strings blocks)
+      if (offset + 40 > u8.byteLength) return '';
+      const off_dt_struct = dv.getUint32(offset + 8);
+      const off_dt_strings = dv.getUint32(offset + 12);
+      const size_dt_strings = dv.getUint32(offset + 32);
+      const size_dt_struct = dv.getUint32(offset + 36);
+      const needed = Math.max(off_dt_struct + size_dt_struct, off_dt_strings + size_dt_strings);
+      const sliceSize = Math.min(totalsize, needed);
+      const slice = u8.slice(offset, offset + sliceSize);
       const tree = FDT.parse(slice);
       return FDT.getStringProperty(tree.root, 'description') || '';
     } catch {

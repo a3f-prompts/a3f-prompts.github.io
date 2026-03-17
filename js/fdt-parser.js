@@ -309,6 +309,19 @@ const FDT = (() => {
   }
 
   /**
+   * Get a stringlist property as an array of strings (split on null bytes).
+   */
+  function getStringListProperty(node, name) {
+    const data = getProperty(node, name);
+    if (!data) return null;
+    let end = data.byteLength;
+    while (end > 0 && data[end - 1] === 0) end--;
+    if (end === 0) return [];
+    const raw = new TextDecoder().decode(data.slice(0, end));
+    return raw.split('\0');
+  }
+
+  /**
    * Remove a child node by name. Returns true if removed.
    */
   function removeChild(parent, childName) {
@@ -396,6 +409,7 @@ const FDT = (() => {
     getProperty,
     setProperty,
     getStringProperty,
+    getStringListProperty,
     removeChild,
     cloneNode,
     resolveExternalData,

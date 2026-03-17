@@ -353,6 +353,7 @@
       if (img.description) extra = esc(img.description);
       if (img.arch && (img.type === 'kernel' || img.type === 'kernel_noload')) extra += ` (${esc(img.arch)})`;
       if (img.isX509) extra += ' <span class="badge-x509">X.509</span>';
+      if (img.isVAB) extra += ' <span class="badge-vab">VAB</span>';
       if (isRooted && !img.isOrig) {
         const isPwned = img.description.includes('(Pwnd)') || modifiedTypes.has(img.type);
         if (isPwned) extra += ' <span class="badge-pwned">pwned</span>';
