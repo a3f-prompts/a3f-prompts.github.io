@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const { webcrypto } = require('crypto');
 
 const {
-  FDT, FitOps, buildTestFit, buildMinimalDtb, buildExternalDataFit,
+  FDT, FitOps, ShaFallback, buildTestFit, buildMinimalDtb, buildExternalDataFit,
 } = require('./test-helpers');
 
 // ---------------------------------------------------------------------------
@@ -915,6 +915,116 @@ describe('X.509 detection', () => {
 });
 
 // ---------------------------------------------------------------------------
+// SoCFPGA VAB detection
+// ---------------------------------------------------------------------------
+describe('VAB detection', () => {
+  function buildVABImage(payloadSize) {
+    // VAB layout: [payload] [SDM_CERT_MAGIC_LE (4)] [cert_body (certSz-4)] [certSz as LE u32 (4)]
+    // cert starts at offset payloadSize with magic 0x25D04E7F
+    const certBodySize = 60; // arbitrary certificate body
+    const certSz = 4 + certBodySize; // magic + body
+    const total = payloadSize + certSz + 4; // +4 for trailing size field
+    const buf = new Uint8Array(total);
+    // Fill payload with non-zero data
+    for (let i = 0; i < payloadSize; i++) buf[i] = 0xAA;
+    // SDM_CERT_MAGIC_NUM 0x25D04E7F in little-endian
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(payloadSize, 0x25D04E7F, true);
+    // Write cert size at the end (little-endian)
+    dv.setUint32(total - 4, certSz, true);
+    return buf;
+  }
+
+  it('image with VAB certificate appended is flagged as VAB', async () => {
+    const vabData = buildVABImage(128);
+
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const enc = new TextEncoder();
+    imagesNode.children.push({
+      name: 'vab-firmware',
+      properties: [
+        { name: 'description', data: enc.encode('VAB signed firmware\0') },
+        { name: 'data', data: vabData },
+        { name: 'type', data: enc.encode('firmware\0') },
+        { name: 'compression', data: enc.encode('none\0') },
+      ],
+      children: [],
+    });
+    const modified = FDT.serialize(tree);
+
+    const result = FitOps.validate(modified);
+    const firmware = result.images.find(i => i.name === 'vab-firmware');
+    assert.ok(firmware, 'Expected vab-firmware image');
+    assert.equal(firmware.isVAB, true, 'Should be flagged as VAB');
+  });
+
+  it('normal kernel image is not flagged as VAB', async () => {
+    const { binary } = await buildTestFit();
+    const result = FitOps.validate(binary);
+    const kernel = result.images.find(i => i.name === 'kernel');
+    assert.ok(kernel);
+    assert.equal(kernel.isVAB, false, 'kernel should not be flagged as VAB');
+  });
+
+  it('image too small for VAB is not flagged', async () => {
+    const tiny = new Uint8Array(4);
+
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const enc = new TextEncoder();
+    imagesNode.children.push({
+      name: 'tiny-img',
+      properties: [
+        { name: 'description', data: enc.encode('Tiny\0') },
+        { name: 'data', data: tiny },
+        { name: 'type', data: enc.encode('firmware\0') },
+        { name: 'compression', data: enc.encode('none\0') },
+      ],
+      children: [],
+    });
+    const modified = FDT.serialize(tree);
+
+    const result = FitOps.validate(modified);
+    const img = result.images.find(i => i.name === 'tiny-img');
+    assert.ok(img);
+    assert.equal(img.isVAB, false, 'Tiny image should not be flagged as VAB');
+  });
+
+  it('image with wrong magic is not flagged as VAB', async () => {
+    // Build something that looks like VAB but with wrong magic
+    const total = 128 + 64 + 4;
+    const buf = new Uint8Array(total);
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(128, 0xDEADBEEF, true); // wrong magic
+    dv.setUint32(total - 4, 64, true); // cert size
+
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const enc = new TextEncoder();
+    imagesNode.children.push({
+      name: 'not-vab',
+      properties: [
+        { name: 'description', data: enc.encode('Not VAB\0') },
+        { name: 'data', data: buf },
+        { name: 'type', data: enc.encode('firmware\0') },
+        { name: 'compression', data: enc.encode('none\0') },
+      ],
+      children: [],
+    });
+    const modified = FDT.serialize(tree);
+
+    const result = FitOps.validate(modified);
+    const img = result.images.find(i => i.name === 'not-vab');
+    assert.ok(img);
+    assert.equal(img.isVAB, false, 'Wrong magic should not be flagged as VAB');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Multi-configuration coverage
 // ---------------------------------------------------------------------------
 describe('Multi-configuration coverage', () => {
@@ -980,5 +1090,163 @@ describe('Multi-configuration coverage', () => {
     const orig2Data = FDT.getProperty(origFdt2, 'data');
     const orig2Model = FDT.getStringProperty(FDT.parse(orig2Data).root, 'model');
     assert.equal(orig2Model, 'Board B', 'orig-fdt-2 should preserve Board B');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Loadables (stringlist) support
+// ---------------------------------------------------------------------------
+describe('Loadables stringlist support', () => {
+  it('validate parses loadables stringlist into separate imageRefs', async () => {
+    const enc = new TextEncoder();
+    function strProp(s) { return enc.encode(s + '\0'); }
+    function strListProp(...ss) { return enc.encode(ss.map(s => s + '\0').join('')); }
+    function u32Prop(v) {
+      const b = new ArrayBuffer(4);
+      new DataView(b).setUint32(0, v);
+      return new Uint8Array(b);
+    }
+
+    const kernel = enc.encode('kernel data');
+    const atf = enc.encode('atf data');
+    const tee = enc.encode('tee data');
+
+    const tree = {
+      header: { version: 17, last_comp_version: 16, boot_cpuid_phys: 0 },
+      reserveEntries: [],
+      root: {
+        name: '',
+        properties: [
+          { name: 'description', data: strProp('FIT with loadables') },
+          { name: '#address-cells', data: u32Prop(1) },
+        ],
+        children: [
+          {
+            name: 'images',
+            properties: [],
+            children: [
+              {
+                name: 'kernel',
+                properties: [
+                  { name: 'description', data: strProp('Linux Kernel') },
+                  { name: 'data', data: new Uint8Array(kernel) },
+                  { name: 'type', data: strProp('kernel') },
+                  { name: 'compression', data: strProp('none') },
+                ],
+                children: [],
+              },
+              {
+                name: 'atf',
+                properties: [
+                  { name: 'description', data: strProp('ARM Trusted Firmware') },
+                  { name: 'data', data: new Uint8Array(atf) },
+                  { name: 'type', data: strProp('firmware') },
+                  { name: 'compression', data: strProp('none') },
+                ],
+                children: [],
+              },
+              {
+                name: 'tee',
+                properties: [
+                  { name: 'description', data: strProp('OP-TEE') },
+                  { name: 'data', data: new Uint8Array(tee) },
+                  { name: 'type', data: strProp('tee') },
+                  { name: 'compression', data: strProp('none') },
+                ],
+                children: [],
+              },
+            ],
+          },
+          {
+            name: 'configurations',
+            properties: [{ name: 'default', data: strProp('conf-1') }],
+            children: [
+              {
+                name: 'conf-1',
+                properties: [
+                  { name: 'description', data: strProp('Boot config with loadables') },
+                  { name: 'kernel', data: strProp('kernel') },
+                  { name: 'loadables', data: strListProp('atf', 'tee') },
+                ],
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const binary = FDT.serialize(tree);
+    const result = FitOps.validate(binary);
+
+    assert.ok(result.valid);
+    assert.equal(result.configs.length, 1);
+
+    const cfg = result.configs[0];
+    const loadableRefs = cfg.imageRefs.filter(r => r.role === 'loadables');
+    assert.equal(loadableRefs.length, 2, 'Should have 2 loadable refs');
+    assert.equal(loadableRefs[0].image, 'atf');
+    assert.equal(loadableRefs[1].image, 'tee');
+
+    // Kernel should still be there too
+    const kernelRef = cfg.imageRefs.find(r => r.role === 'kernel');
+    assert.ok(kernelRef, 'Should have kernel ref');
+    assert.equal(kernelRef.image, 'kernel');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ShaFallback — verify identical output to crypto.subtle
+// ---------------------------------------------------------------------------
+describe('ShaFallback', () => {
+  const testVectors = [
+    new Uint8Array(0),                                    // empty
+    new Uint8Array([0x61, 0x62, 0x63]),                   // "abc"
+    new TextEncoder().encode('hello world'),               // short string
+    new Uint8Array(55),                                    // exactly one block after padding
+    new Uint8Array(56),                                    // triggers two-block padding
+    new Uint8Array(64),                                    // exactly one block
+    new Uint8Array(1000).map((_, i) => i & 0xFF),         // multi-block
+    new Uint8Array(65536).map((_, i) => (i * 31) & 0xFF), // large input
+  ];
+
+  for (const [i, input] of testVectors.entries()) {
+    it(`sha256 matches crypto.subtle for vector ${i} (${input.length} bytes)`, async () => {
+      const expected = new Uint8Array(await webcrypto.subtle.digest('SHA-256', input));
+      const actual = new Uint8Array(await ShaFallback.sha256(input));
+      assert.deepEqual(actual, expected);
+    });
+
+    it(`sha1 matches crypto.subtle for vector ${i} (${input.length} bytes)`, async () => {
+      const expected = new Uint8Array(await webcrypto.subtle.digest('SHA-1', input));
+      const actual = new Uint8Array(await ShaFallback.sha1(input));
+      assert.deepEqual(actual, expected);
+    });
+  }
+
+  it('sha256 accepts ArrayBuffer input', async () => {
+    const data = new Uint8Array([1, 2, 3, 4]).buffer;
+    const expected = new Uint8Array(await webcrypto.subtle.digest('SHA-256', data));
+    const actual = new Uint8Array(await ShaFallback.sha256(data));
+    assert.deepEqual(actual, expected);
+  });
+
+  it('sha1 accepts ArrayBuffer input', async () => {
+    const data = new Uint8Array([1, 2, 3, 4]).buffer;
+    const expected = new Uint8Array(await webcrypto.subtle.digest('SHA-1', data));
+    const actual = new Uint8Array(await ShaFallback.sha1(data));
+    assert.deepEqual(actual, expected);
+  });
+
+  it('sha256 returns ArrayBuffer', async () => {
+    const result = await ShaFallback.sha256(new Uint8Array([0]));
+    assert.ok(result instanceof ArrayBuffer);
+    assert.equal(result.byteLength, 32);
+  });
+
+  it('sha1 returns ArrayBuffer', async () => {
+    const result = await ShaFallback.sha1(new Uint8Array([0]));
+    assert.ok(result instanceof ArrayBuffer);
+    assert.equal(result.byteLength, 20);
   });
 });

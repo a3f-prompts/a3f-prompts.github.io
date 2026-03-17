@@ -14,13 +14,18 @@ globalThis.TextDecoder = TextDecoder;
 
 // Load browser modules by evaluating them (they assign to global IIFE-style)
 const fdtCode = readFileSync(join(__dirname, 'fdt-parser.js'), 'utf8');
+const shaFallbackCode = readFileSync(join(__dirname, 'sha-fallback.js'), 'utf8');
 const fitOpsCode = readFileSync(join(__dirname, 'fit-ops.js'), 'utf8');
 
 // FDT is an IIFE assigned to const — extract it
 const FDT = new Function(fdtCode.replace('const FDT =', 'return') )();
 globalThis.FDT = FDT;
 
-// FitOps depends on FDT being global
+// ShaFallback must be global before FitOps
+const ShaFallback = new Function(shaFallbackCode.replace('const ShaFallback =', 'return'))();
+globalThis.ShaFallback = ShaFallback;
+
+// FitOps depends on FDT and ShaFallback being global
 const FitOps = new Function(fitOpsCode.replace('const FitOps =', 'return'))();
 
 /**
@@ -293,4 +298,4 @@ async function buildExternalDataFit(kernelData = null) {
   return full;
 }
 
-module.exports = { FDT, FitOps, buildTestFit, buildMinimalDtb, buildExternalDataFit };
+module.exports = { FDT, FitOps, ShaFallback, buildTestFit, buildMinimalDtb, buildExternalDataFit };

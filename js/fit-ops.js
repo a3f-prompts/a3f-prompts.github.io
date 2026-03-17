@@ -32,7 +32,9 @@ const FitOps = (() => {
    * SHA-256 via Web Crypto API (async).
    */
   async function sha256(data) {
-    const hash = await crypto.subtle.digest('SHA-256', data);
+    const hash = (typeof crypto !== 'undefined' && crypto.subtle)
+      ? await crypto.subtle.digest('SHA-256', data)
+      : await ShaFallback.sha256(data);
     return new Uint8Array(hash);
   }
 
@@ -92,7 +94,18 @@ const FitOps = (() => {
       const compression = FDT.getStringProperty(img, 'compression') || 'none';
       const arch = FDT.getStringProperty(img, 'arch') || '';
       const isX509 = data && data.byteLength >= 2 && data[0] === 0x30 && data[1] === 0x82;
-      return { name: img.name, type, description: desc, size, compression, arch, isOrig, isX509 };
+      // SoCFPGA VAB: certificate appended at end of image data.
+      // Last 4 bytes = cert size (LE), then at end - certSz - 4: SDM_CERT_MAGIC 0x25D04E7F (LE).
+      let isVAB = false;
+      if (data && data.byteLength >= 8) {
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const certSz = dv.getUint32(data.byteLength - 4, true);
+        const certOff = data.byteLength - certSz - 4;
+        if (certSz > 0 && certOff >= 0 && certOff + 4 <= data.byteLength) {
+          isVAB = dv.getUint32(certOff, true) === 0x25D04E7F;
+        }
+      }
+      return { name: img.name, type, description: desc, size, compression, arch, isOrig, isX509, isVAB };
     });
 
     const desc = FDT.getStringProperty(tree.root, 'description') || '';
@@ -117,8 +130,12 @@ const FitOps = (() => {
         const imageNames = new Set(imagesNode.children.map(c => c.name));
         const refProps = ['kernel', 'fdt', 'ramdisk', 'loadables', 'firmware', 'standalone', 'fpga', 'setup'];
         for (const prop of refProps) {
-          const val = FDT.getStringProperty(cfg, prop);
-          if (val && imageNames.has(val)) imageRefs.push({ role: prop, image: val });
+          const vals = FDT.getStringListProperty(cfg, prop);
+          if (vals) {
+            for (const val of vals) {
+              if (imageNames.has(val)) imageRefs.push({ role: prop, image: val });
+            }
+          }
         }
         const cfgDesc = FDT.getStringProperty(cfg, 'description') || '';
         configs.push({ name: cfg.name, description: cfgDesc, imageRefs, signatures: cfgSigs, isDefault: cfg.name === defaultConfig });
@@ -286,7 +303,9 @@ const FitOps = (() => {
         const hashVal = await sha256(data);
         FDT.setProperty(hashNode, 'value', hashVal);
       } else if (algo === 'sha1' || algo === 'sha-1') {
-        const hash = await crypto.subtle.digest('SHA-1', data);
+        const hash = (typeof crypto !== 'undefined' && crypto.subtle)
+          ? await crypto.subtle.digest('SHA-1', data)
+          : await ShaFallback.sha1(data);
         FDT.setProperty(hashNode, 'value', new Uint8Array(hash));
       } else if (algo === 'md5') {
         const prop = hashNode.properties.find(p => p.name === 'value');
