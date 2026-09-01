@@ -47,6 +47,12 @@ class FdtBuilder:
         self.struct_data += struct.pack('>III', FDT_PROP, 4, self._str_offset(name))
         self.struct_data += data
 
+    def prop_stringlist(self, name, values):
+        data = b''.join(v.encode() + b'\x00' for v in values)
+        self.struct_data += struct.pack('>III', FDT_PROP, len(data), self._str_offset(name))
+        self.struct_data += data
+        self._pad4()
+
     def prop_bytes(self, name, data):
         self.struct_data += struct.pack('>III', FDT_PROP, len(data), self._str_offset(name))
         self.struct_data += data
