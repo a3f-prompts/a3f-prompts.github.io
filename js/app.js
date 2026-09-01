@@ -333,17 +333,17 @@
       const algoStr = sigResult.sigAlgos.length > 0 ? ` (${sigResult.sigAlgos.join(', ')})` : '';
       if (allSigned) {
         if (isRooted) {
-          summary += ` across <span style="color:#e67e22;font-weight:bold">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span> &mdash; <span class="badge-pwned">bypassed</span>`;
+          summary += ` across <span class="sig-count">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span> &mdash; <span class="badge-pwned">bypassed</span>`;
         } else {
-          summary += ` across <span style="color:#e67e22;font-weight:bold">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span>`;
+          summary += ` across <span class="sig-count">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span>`;
         }
       } else {
         summary += ` across ${result.numConfigs} configuration${result.numConfigs !== 1 ? 's' : ''}`;
         if (sigResult.hasSignatures) {
           if (isRooted) {
-            summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.numSignedConfigs} signed${algoStr})</span> &mdash; <span class="badge-pwned">bypassed</span>`;
+            summary += ` <span class="sig-count">(${sigResult.numSignedConfigs} signed${algoStr})</span> &mdash; <span class="badge-pwned">bypassed</span>`;
           } else {
-            summary += ` <span style="color:#e67e22;font-weight:bold">(${sigResult.numSignedConfigs} signed${algoStr})</span>`;
+            summary += ` <span class="sig-count">(${sigResult.numSignedConfigs} signed${algoStr})</span>`;
           }
         }
       }
@@ -390,7 +390,7 @@
     const sigResult = isRooted ? lastValidateResult : result;
     const configs = result.configs || [];
     if (configs.length === 0) {
-      fitConfigContent.innerHTML = '<p style="color:#888;font-size:0.85rem">No configurations found.</p>';
+      fitConfigContent.innerHTML = '<p class="empty-note">No configurations found.</p>';
       return;
     }
 
@@ -432,7 +432,7 @@
         }
         html += '</table>';
       } else {
-        html += '<p style="color:#666;font-size:0.8rem;padding:0.3rem 0">&nbsp;&nbsp;No image references</p>';
+        html += '<p class="empty-note-sm">&nbsp;&nbsp;No image references</p>';
       }
 
       html += `</div></div>`;

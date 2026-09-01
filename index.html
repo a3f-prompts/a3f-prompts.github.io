@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f7f4ef">
   <title>fitfall.de — about FIT and pitfalls</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -117,16 +119,11 @@
         support it too.</dd>
 
         <dt>Why is FIT security relevant?</dt>
-        <dd>Millions of embedded devices make use of FIT's support for cryptographic signatures to ensure image
-	integrity. Unfortunately, the security aspects of FIT are bolted onto the format and verification
-	can only happen after parsing the flattened device tree format. This complexity is error-prone.
-	</dt>
-
-        <dt>Why do some images not have a signed configuration?</dt>
-        <dd>Not all images in a FIT need to be part of a verified boot chain.
-        Some images may be verified by other means: they can be individually
-        X.509 signed (shown with an <span style="color:#ee0;font-weight:bold">X.509</span> badge) or the entire FIT
-        may be authenticated as a whole, e.g. via i.MX High Assurance Boot (HAB).</dd>
+        <dd>Embedded devices rely on FIT's cryptographic signatures for verified boot.
+        Signing was bolted onto the format afterwards, though: nothing can be checked
+        before parsing the flattened device tree, and keeping track of
+        which bytes that signature actually covered is where it can go wrong. Those
+        pitfalls, and how to avoid them, are what this site is about.</dd>
 
         <dt>What does this website do?</dt>
         <dd>
