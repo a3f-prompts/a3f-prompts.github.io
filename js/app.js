@@ -146,12 +146,23 @@
 
   // --- Progress simulation ---
 
+  let progressGen = 0;
+
   function animateProgress(target, duration) {
+    // Supersede any animation still in flight: handleFile() starts a 0->60
+    // ramp before the FileReader completes, and a small file lets the
+    // follow-up 60->100 ramp finish first. Without this the older, longer
+    // animation keeps writing and leaves the bar stuck partway.
+    const gen = ++progressGen;
     return new Promise(resolve => {
       progressContainer.classList.remove('hidden');
       const start = parseFloat(progressBar.style.width) || 0;
       const startTime = performance.now();
       function step(now) {
+        if (gen !== progressGen) {
+          resolve();
+          return;
+        }
         const elapsed = now - startTime;
         const pct = Math.min(start + (target - start) * (elapsed / duration), target);
         progressBar.style.width = pct + '%';
