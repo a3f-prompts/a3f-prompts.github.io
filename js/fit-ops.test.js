@@ -1250,3 +1250,98 @@ describe('ShaFallback', () => {
     assert.equal(result.byteLength, 20);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sanity-check method
+//
+// The negative control: patch the signed image, recompute its hashes and leave
+// the configuration signature alone.  The result must fail verification, so a
+// device that boots it is not verifying signatures at all and a pass from the
+// real bypass proves nothing there.
+// ---------------------------------------------------------------------------
+describe('Sanity-check method', () => {
+  let fitBinary;
+
+  const SANITY_OPTS = {
+    changeDtModel: false,
+    replaceKernel: true,
+    method: 'sanity-check',
+  };
+
+  before(async () => {
+    fitBinary = (await buildTestFit()).binary;
+  });
+
+  async function patchKernel(payloadText) {
+    const kernelData = new TextEncoder().encode(payloadText);
+    const out = await FitOps.root(fitBinary, { ...SANITY_OPTS, kernelData });
+    return { out, tree: FDT.parse(out), kernelData };
+  }
+
+  it('offers the methods in drop-down order, default first', () => {
+    assert.deepEqual(FitOps.METHODS, ['hashed-nodes', 'sanity-check']);
+  });
+
+  it('rejects an unknown method', async () => {
+    await assert.rejects(
+      () => FitOps.root(fitBinary, { ...SANITY_OPTS, method: 'nonesuch', kernelData: new Uint8Array(4) }),
+      /Unknown bypass method 'nonesuch'/);
+  });
+
+  it('patches the signed node in place, without a container', async () => {
+    const { tree, kernelData } = await patchKernel('sanity payload');
+    const names = FDT.findNode(tree.root, ['images']).children.map(c => c.name);
+
+    assert.deepEqual(names, ['kernel', 'fdt-1'], `Unexpected images: ${names}`);
+    assert.deepEqual(FDT.getProperty(FDT.findNode(tree.root, ['images', 'kernel']), 'data'), kernelData);
+  });
+
+  it('recomputes the hash of the patched node', async () => {
+    const { tree, kernelData } = await patchKernel('hash me too');
+    const expected = new Uint8Array(await webcrypto.subtle.digest('SHA-256', kernelData));
+
+    const hash = FDT.findNode(tree.root, ['images', 'kernel', 'hash-1']);
+    assert.deepEqual(FDT.getProperty(hash, 'value'), expected);
+  });
+
+  it('leaves the signature covering the node it always covered', async () => {
+    const { tree } = await patchKernel('still signed');
+    const origTree = FDT.parse(fitBinary);
+
+    const sig = FDT.findNode(tree.root, ['configurations', 'conf-1', 'signature-1']);
+    const origSig = FDT.findNode(origTree.root, ['configurations', 'conf-1', 'signature-1']);
+    assert.deepEqual(sig.properties, origSig.properties);
+
+    const hashedNodes = new TextDecoder().decode(FDT.getProperty(sig, 'hashed-nodes'));
+    assert.ok(hashedNodes.includes('/images/kernel'), `Expected the signed path, got: ${hashedNodes}`);
+    assert.ok(!hashedNodes.includes('/images/orig-'), `Nothing should be redirected: ${hashedNodes}`);
+  });
+
+  it('marks the patched node (Pwnd)', async () => {
+    const { tree } = await patchKernel('described');
+    const kernel = FDT.findNode(tree.root, ['images', 'kernel']);
+    assert.equal(FDT.getStringProperty(kernel, 'description'), 'Linux Kernel (Pwnd)');
+  });
+
+  it('changes the DT model in the signed fdt image itself', async () => {
+    const out = await FitOps.root(fitBinary, { changeDtModel: true, method: 'sanity-check' });
+    const tree = FDT.parse(out);
+
+    const names = FDT.findNode(tree.root, ['images']).children.map(c => c.name);
+    assert.ok(!names.some(n => n.startsWith('orig-')), `Unexpected container in: ${names}`);
+
+    const inner = FDT.parse(FDT.getProperty(FDT.findNode(tree.root, ['images', 'fdt-1']), 'data'));
+    assert.ok(FDT.getStringProperty(inner.root, 'model').includes('[rooted by ifitfitsisits.com]'));
+  });
+
+  it('an explicit hashed-nodes method still uses the orig- container', async () => {
+    const out = await FitOps.root(fitBinary, {
+      changeDtModel: false,
+      replaceKernel: true,
+      kernelData: new TextEncoder().encode('classic'),
+      method: 'hashed-nodes',
+    });
+    const names = FDT.findNode(FDT.parse(out).root, ['images']).children.map(c => c.name);
+    assert.ok(names.includes('orig-kernel'), `Expected orig-kernel in: ${names}`);
+  });
+});

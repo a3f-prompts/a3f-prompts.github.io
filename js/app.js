@@ -20,6 +20,8 @@
   const initramfsUpload = document.getElementById('initramfs-upload');
   const initramfsFileInput = document.getElementById('initramfs-file-input');
   const initramfsFileName = document.getElementById('initramfs-file-name');
+  const optMethod = document.getElementById('opt-method');
+  const methodNotes = document.querySelectorAll('.method-note');
   const rootBtn = document.getElementById('root-btn');
   const downloadSection = document.getElementById('download-section');
   const downloadLink = document.getElementById('download-link');
@@ -313,6 +315,7 @@
 
   function renderImageTable(result, opts) {
     const isRooted = !!opts;
+    const verdict = isRooted ? sigVerdict(opts) : null;
     const modifiedTypes = new Set();
     if (opts) {
       if (opts.changeDtModel) modifiedTypes.add('flat_dt');
@@ -333,7 +336,7 @@
       const algoStr = sigResult.sigAlgos.length > 0 ? ` (${sigResult.sigAlgos.join(', ')})` : '';
       if (allSigned) {
         if (isRooted) {
-          summary += ` across <span class="sig-count">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span> &mdash; <span class="badge-pwned">bypassed</span>`;
+          summary += ` across <span class="sig-count">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span> &mdash; <span class="${verdict.badge}">${verdict.label}</span>`;
         } else {
           summary += ` across <span class="sig-count">${result.numConfigs} signed configuration${result.numConfigs !== 1 ? 's' : ''}${algoStr}</span>`;
         }
@@ -341,7 +344,7 @@
         summary += ` across ${result.numConfigs} configuration${result.numConfigs !== 1 ? 's' : ''}`;
         if (sigResult.hasSignatures) {
           if (isRooted) {
-            summary += ` <span class="sig-count">(${sigResult.numSignedConfigs} signed${algoStr})</span> &mdash; <span class="badge-pwned">bypassed</span>`;
+            summary += ` <span class="sig-count">(${sigResult.numSignedConfigs} signed${algoStr})</span> &mdash; <span class="${verdict.badge}">${verdict.label}</span>`;
           } else {
             summary += ` <span class="sig-count">(${sigResult.numSignedConfigs} signed${algoStr})</span>`;
           }
@@ -387,6 +390,7 @@
 
   function renderConfigTab(result, opts) {
     const isRooted = !!opts;
+    const verdict = isRooted ? sigVerdict(opts) : null;
     const sigResult = isRooted ? lastValidateResult : result;
     const configs = result.configs || [];
     if (configs.length === 0) {
@@ -405,7 +409,7 @@
       const defaultBadge = cfg.isDefault ? ' <span class="badge-default">default</span>' : '';
       const sigBadges = cfg.signatures.map(s => {
         if (isRooted) {
-          return ` <span class="badge-pwned">${esc(s.algo)} &mdash; bypassed</span>`;
+          return ` <span class="${verdict.badge}">${esc(s.algo)} &mdash; ${verdict.label}</span>`;
         }
         return ` <span class="badge-signed">${esc(s.algo)}</span>`;
       }).join('');
@@ -502,6 +506,15 @@
     return d.innerHTML;
   }
 
+  // What the run did to the configuration signature.  The sanity check
+  // deliberately leaves it covering data it no longer matches, so calling that
+  // result "bypassed" would be a lie: it is a signature that must now fail.
+  function sigVerdict(opts) {
+    return opts.method === 'sanity-check'
+      ? { label: 'broken', badge: 'badge-broken' }
+      : { label: 'bypassed', badge: 'badge-pwned' };
+  }
+
   function showRootedInfo(outputBuffer, opts) {
     const result = FitOps.validate(outputBuffer);
     if (!result.valid) return;
@@ -535,6 +548,17 @@
       handleFile(e.dataTransfer.files[0]);
     }
   });
+
+  // --- Bypass method ---
+
+  function updateMethodNote() {
+    for (const note of methodNotes) {
+      note.classList.toggle('hidden', note.dataset.method !== optMethod.value);
+    }
+  }
+
+  optMethod.addEventListener('change', updateMethodNote);
+  updateMethodNote();
 
   // --- Kernel file picker ---
 
@@ -611,6 +635,7 @@
         kernelData: kernelBuffer,
         appendInitramfs: optInitramfs.checked,
         initramfsData: initramfsBuffer,
+        method: optMethod.value,
         recomputeHashes: !debugMode || optRecomputeHashes.checked,
         redirectSignatures: !debugMode || optRedirectSignatures.checked,
       };
@@ -637,12 +662,13 @@
       // Create download — splice back into disk image if applicable
       let outputData;
       let outputExt;
+      const suffix = '-' + sigVerdict(opts).label;
       if (diskBuffer && diskFitInfo) {
         outputData = FitScanner.splice(diskBuffer, diskFitInfo.offset, diskFitInfo.totalsize, result);
-        outputExt = '-bypassed' + (fitFileName.includes('.') ? fitFileName.replace(/^.*(\.[^.]+)$/, '$1') : '.img');
+        outputExt = suffix + (fitFileName.includes('.') ? fitFileName.replace(/^.*(\.[^.]+)$/, '$1') : '.img');
       } else {
         outputData = result;
-        outputExt = '-bypassed.fit';
+        outputExt = suffix + '.fit';
       }
       const blob = new Blob([outputData], { type: 'application/octet-stream' });
       const url = URL.createObjectURL(blob);

