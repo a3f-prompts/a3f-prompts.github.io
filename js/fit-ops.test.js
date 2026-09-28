@@ -1279,7 +1279,7 @@ describe('Sanity-check method', () => {
   }
 
   it('offers the methods in drop-down order, default first', () => {
-    assert.deepEqual(FitOps.METHODS, ['hashed-nodes', 'sanity-check']);
+    assert.deepEqual(FitOps.METHODS, ['hashed-nodes', 'entry-address', 'sanity-check']);
   });
 
   it('rejects an unknown method', async () => {
@@ -1343,5 +1343,251 @@ describe('Sanity-check method', () => {
     });
     const names = FDT.findNode(FDT.parse(out).root, ['images']).children.map(c => c.name);
     assert.ok(names.includes('orig-kernel'), `Expected orig-kernel in: ${names}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Entry-address bypass
+//
+// A per-image signature covers the image's data and nothing else, so load,
+// entry and any property we bring along ride into the bootloader unverified.
+// See https://lore.kernel.org/u-boot/87h5quqqln.fsf@prevas.dk/
+// ---------------------------------------------------------------------------
+describe('Entry-address bypass', () => {
+  const BASE = 0x82000000;
+  const PAYLOAD = new TextEncoder().encode('\x7fthis is shellcode, honest\x00');
+
+  let imageSigned;   // signed the required = "image" way
+
+  before(async () => {
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+
+    // Drop the configuration signature and sign the kernel image instead, the
+    // way mkimage does it for required = "image": a signature node next to the
+    // hash, covering the image data.
+    FDT.removeChild(FDT.findNode(tree.root, ['configurations', 'conf-1']), 'signature-1');
+    FDT.findNode(tree.root, ['images', 'kernel']).children.push({
+      name: 'signature-1',
+      properties: [
+        { name: 'algo', data: new TextEncoder().encode('sha256,rsa2048\0') },
+        { name: 'key-name-hint', data: new TextEncoder().encode('dev\0') },
+        { name: 'value', data: new Uint8Array(256).fill(0x5a) },
+      ],
+      children: [],
+    });
+    imageSigned = FDT.serialize(tree);
+  });
+
+  const hijack = (binary, extra) => FitOps.root(binary, {
+    changeDtModel: false,
+    replaceKernel: true,
+    kernelData: PAYLOAD,
+    method: 'entry-address',
+    fitLoadAddress: BASE,
+    ...extra,
+  });
+
+  const kernelOf = binary => FDT.findNode(FDT.parse(binary).root, ['images', 'kernel']);
+
+  it('points entry at the payload as it sits in the loaded blob', async () => {
+    const out = await hijack(imageSigned);
+    const entry = FitOps.validate(out).images.find(i => i.name === 'kernel').entry;
+
+    const offset = entry - BASE;
+    assert.ok(offset > 0 && offset < out.byteLength, `entry 0x${entry.toString(16)} is not inside the FIT`);
+    assert.deepEqual(out.slice(offset, offset + PAYLOAD.byteLength), PAYLOAD);
+  });
+
+  it('leaves every signed byte of the image alone', async () => {
+    const out = await hijack(imageSigned);
+    const before = kernelOf(imageSigned);
+    const after = kernelOf(out);
+
+    assert.deepEqual(FDT.getProperty(after, 'data'), FDT.getProperty(before, 'data'));
+    assert.deepEqual(FDT.getProperty(after, 'load'), FDT.getProperty(before, 'load'));
+    assert.deepEqual(FDT.getStringProperty(after, 'description'), 'Linux Kernel');
+    for (const name of ['hash-1', 'signature-1']) {
+      assert.deepEqual(FDT.findNode(after, [name]), FDT.findNode(before, [name]), name);
+    }
+  });
+
+  it('carries the payload in a property of the signed node', async () => {
+    const out = await hijack(imageSigned);
+    assert.deepEqual(FDT.getProperty(kernelOf(out), FitOps.PAYLOAD_PROP), PAYLOAD);
+  });
+
+  it('flags the entry as pointing outside its image', async () => {
+    assert.equal(FitOps.validate(imageSigned).images.find(i => i.name === 'kernel').entryEscapes, false);
+    const out = await hijack(imageSigned);
+    assert.equal(FitOps.validate(out).images.find(i => i.name === 'kernel').entryEscapes, true);
+  });
+
+  it('re-places the entry when run a second time', async () => {
+    const once = await hijack(imageSigned);
+    const twice = await hijack(once);
+
+    const entry = FitOps.validate(twice).images.find(i => i.name === 'kernel').entry;
+    assert.deepEqual(twice.slice(entry - BASE, entry - BASE + PAYLOAD.byteLength), PAYLOAD);
+  });
+
+  it('writes a two-cell entry when the image uses two', async () => {
+    const tree = FDT.parse(imageSigned);
+    const kernel = FDT.findNode(tree.root, ['images', 'kernel']);
+    for (const name of ['load', 'entry']) {
+      const wide = new Uint8Array(8);
+      wide.set(FDT.getProperty(kernel, name), 4);
+      FDT.setProperty(kernel, name, wide);
+    }
+
+    const out = await hijack(FDT.serialize(tree), { fitLoadAddress: '0x880000000' });
+    const entry = FDT.getProperty(kernelOf(out), 'entry');
+    assert.equal(entry.byteLength, 8);
+
+    const offset = FitOps.validate(out).images.find(i => i.name === 'kernel').entry - 0x880000000;
+    assert.deepEqual(out.slice(offset, offset + PAYLOAD.byteLength), PAYLOAD);
+  });
+
+  it('refuses an image a configuration signature covers', async () => {
+    const { binary } = await buildTestFit();
+    await assert.rejects(hijack(binary), /covered by a configuration signature/);
+  });
+
+  it('refuses it on the configuration reference alone, without hashed-nodes', async () => {
+    // U-Boot stopped reading hashed-nodes in 2092322b31cc and rebuilds the
+    // signed node list from the configuration's image references, so a FIT
+    // without the property is no less protected.
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    const sig = FDT.findNode(tree.root, ['configurations', 'conf-1', 'signature-1']);
+    sig.properties = sig.properties.filter(p => p.name !== 'hashed-nodes');
+
+    await assert.rejects(hijack(FDT.serialize(tree)), /covered by a configuration signature/);
+  });
+
+  it('allows an image no signed configuration refers to', async () => {
+    // Same FIT, but the configuration names a different kernel: nothing signed
+    // covers /images/kernel any more.
+    const { binary } = await buildTestFit();
+    const tree = FDT.parse(binary);
+    FDT.setProperty(FDT.findNode(tree.root, ['configurations', 'conf-1']), 'kernel', 'other');
+    const sig = FDT.findNode(tree.root, ['configurations', 'conf-1', 'signature-1']);
+    sig.properties = sig.properties.filter(p => p.name !== 'hashed-nodes');
+
+    const out = await hijack(FDT.serialize(tree));
+    assert.deepEqual(FDT.getProperty(kernelOf(out), FitOps.PAYLOAD_PROP), PAYLOAD);
+  });
+
+  // A kernel_noload image is booted where it lies: bootm replaces its load
+  // address with the position of the image data and adds that to entry
+  // (boot/bootm.c: images.ep += images.os.image_start).  An absolute address
+  // in entry therefore lands image_start too far along -- which is what an
+  // arm64 Image, the common kernel_noload case, would have done.
+  describe('kernel_noload', () => {
+    let noload;
+
+    before(() => {
+      const tree = FDT.parse(imageSigned);
+      FDT.setProperty(FDT.findNode(tree.root, ['images', 'kernel']), 'type', 'kernel_noload');
+      noload = FDT.serialize(tree);
+    });
+
+    const offsetsOf = binary => ({
+      payload: FDT.propertyOffset(binary, ['images', 'kernel'], FitOps.PAYLOAD_PROP),
+      data: FDT.propertyOffset(binary, ['images', 'kernel'], 'data'),
+    });
+
+    it('writes the entry as an offset from the image data', async () => {
+      const out = await hijack(noload);
+      const { payload, data } = offsetsOf(out);
+      const entry = FitOps.validate(out).images.find(i => i.name === 'kernel').entry;
+
+      assert.equal(entry, payload - data);
+      // What bootm computes from it has to land on the payload
+      assert.deepEqual(out.slice(data + entry, data + entry + PAYLOAD.byteLength), PAYLOAD);
+    });
+
+    it('needs no FIT load address', async () => {
+      const out = await hijack(noload, { fitLoadAddress: undefined });
+      const { payload, data } = offsetsOf(out);
+      assert.equal(FitOps.validate(out).images.find(i => i.name === 'kernel').entry,
+        payload - data);
+    });
+
+    it('is not flagged as an entry outside its image', async () => {
+      const out = await hijack(noload);
+      assert.equal(FitOps.validate(out).images.find(i => i.name === 'kernel').entryEscapes,
+        false);
+    });
+
+    it('still needs the address when a plain kernel is along for the ride', async () => {
+      const tree = FDT.parse(noload);
+      const images = FDT.findNode(tree.root, ['images']);
+      const second = FDT.cloneNode(FDT.findNode(images, ['kernel']));
+      second.name = 'kernel-2';
+      FDT.setProperty(second, 'type', 'kernel');
+      images.children.push(second);
+
+      await assert.rejects(
+        hijack(FDT.serialize(tree), { fitLoadAddress: undefined }),
+        /needs the address the FIT itself is loaded at/);
+    });
+  });
+
+  it('refuses the operations that would rewrite signed data', async () => {
+    await assert.rejects(hijack(imageSigned, { changeDtModel: true }),
+      /cannot change the DT model or append an initramfs/);
+    await assert.rejects(
+      hijack(imageSigned, { appendInitramfs: true, initramfsData: PAYLOAD }),
+      /cannot change the DT model or append an initramfs/);
+  });
+
+  it('needs a payload and an address', async () => {
+    await assert.rejects(hijack(imageSigned, { replaceKernel: false }), /needs a payload/);
+    await assert.rejects(hijack(imageSigned, { fitLoadAddress: undefined }),
+      /needs the address the FIT itself is loaded at/);
+    await assert.rejects(hijack(imageSigned, { fitLoadAddress: '  ' }),
+      /needs the address the FIT itself is loaded at/);
+    await assert.rejects(hijack(imageSigned, { fitLoadAddress: 'over there' }),
+      /needs the address the FIT itself is loaded at/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FDT.propertyOffset
+// ---------------------------------------------------------------------------
+describe('FDT.propertyOffset', () => {
+  let fitBinary;
+
+  before(async () => {
+    fitBinary = (await buildTestFit()).binary;
+  });
+
+  it('points at the property value inside the blob', () => {
+    const offset = FDT.propertyOffset(fitBinary, ['images', 'kernel'], 'data');
+    const data = FDT.getProperty(FDT.findNode(FDT.parse(fitBinary).root, ['images', 'kernel']), 'data');
+    assert.deepEqual(fitBinary.slice(offset, offset + data.byteLength), data);
+  });
+
+  it('tells nodes of the same name at different depths apart', () => {
+    const tree = FDT.parse(fitBinary);
+    // A second 'kernel' node, one level deeper, whose data must not be found
+    // when /images/kernel is what was asked for.
+    FDT.findNode(tree.root, ['images', 'kernel']).children.push({
+      name: 'kernel',
+      properties: [{ name: 'data', data: new TextEncoder().encode('decoy') }],
+      children: [],
+    });
+    const binary = FDT.serialize(tree);
+
+    const outer = FDT.propertyOffset(binary, ['images', 'kernel'], 'data');
+    const inner = FDT.propertyOffset(binary, ['images', 'kernel', 'kernel'], 'data');
+    assert.notEqual(outer, inner);
+    assert.deepEqual(binary.slice(inner, inner + 5), new TextEncoder().encode('decoy'));
+  });
+
+  it('returns null for what is not there', () => {
+    assert.equal(FDT.propertyOffset(fitBinary, ['images', 'kernel'], 'nonesuch'), null);
+    assert.equal(FDT.propertyOffset(fitBinary, ['images', 'nonesuch'], 'data'), null);
   });
 });

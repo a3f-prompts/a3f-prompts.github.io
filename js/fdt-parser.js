@@ -262,6 +262,64 @@ const FDT = (() => {
   }
 
   /**
+   * Byte offset of a property's value inside a serialized blob.
+   *
+   * parse() throws offsets away, but the entry-address bypass has to know
+   * where in the blob a property ends up: the address it writes into an
+   * image's entry is where the FIT itself is loaded plus exactly this.  Walks
+   * the structure block instead of searching the blob for the value, which
+   * may well occur a second time inside some image's data.
+   *
+   * Returns null if the node or the property is not there.
+   */
+  function propertyOffset(buffer, path, propName) {
+    const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const stringsStart = dv.getUint32(12);
+    const structStart = dv.getUint32(8);
+    const structEnd = Math.min(structStart + dv.getUint32(36), u8.byteLength);
+    const decoder = new TextDecoder();
+
+    function readString(nameoff) {
+      let end = stringsStart + nameoff;
+      while (end < u8.byteLength && u8[end] !== 0) end++;
+      return decoder.decode(u8.slice(stringsStart + nameoff, end));
+    }
+
+    // Names of the nodes the walk is currently inside, starting at the
+    // (unnamed) root, so the wanted path sits one level in.
+    const here = [];
+    const inTarget = () =>
+      here.length === path.length + 1 && path.every((name, i) => here[i + 1] === name);
+
+    let offset = structStart;
+    while (offset + 4 <= structEnd) {
+      const token = dv.getUint32(offset);
+      offset += 4;
+
+      if (token === TOKEN.BEGIN_NODE) {
+        let end = offset;
+        while (end < u8.byteLength && u8[end] !== 0) end++;
+        here.push(decoder.decode(u8.slice(offset, end)));
+        offset = align4(end + 1);
+      } else if (token === TOKEN.END_NODE) {
+        here.pop();
+      } else if (token === TOKEN.PROP) {
+        const len = dv.getUint32(offset);
+        const nameoff = dv.getUint32(offset + 4);
+        offset += 8;
+        if (inTarget() && readString(nameoff) === propName) return offset;
+        offset += align4(len);
+      } else if (token === TOKEN.END) {
+        break;
+      }
+      // NOP: the token is all there is to skip
+    }
+
+    return null;
+  }
+
+  /**
    * Find a child node by name path (e.g. ["images", "kernel@1"]).
    */
   function findNode(root, path) {
@@ -405,6 +463,7 @@ const FDT = (() => {
     TOKEN,
     parse,
     serialize,
+    propertyOffset,
     findNode,
     getProperty,
     setProperty,

@@ -22,6 +22,8 @@
   const initramfsFileName = document.getElementById('initramfs-file-name');
   const optMethod = document.getElementById('opt-method');
   const methodNotes = document.querySelectorAll('.method-note');
+  const entryOption = document.getElementById('entry-option');
+  const optFitAddress = document.getElementById('opt-fit-address');
   const rootBtn = document.getElementById('root-btn');
   const downloadSection = document.getElementById('download-section');
   const downloadLink = document.getElementById('download-link');
@@ -368,6 +370,10 @@
       if (img.arch && (img.type === 'kernel' || img.type === 'kernel_noload')) extra += ` (${esc(img.arch)})`;
       if (img.isX509) extra += ' <span class="badge-x509">X.509</span>';
       if (img.isVAB) extra += ' <span class="badge-vab">VAB</span>';
+      if (img.entryEscapes) {
+        extra += ' <span class="badge-entry" title="entry does not point into this' +
+          ' image\'s data">entry outside</span>';
+      }
       if (isRooted && !img.isOrig) {
         const isPwned = img.description.includes('(Pwnd)') || modifiedTypes.has(img.type);
         if (isPwned) extra += ' <span class="badge-pwned">pwned</span>';
@@ -491,13 +497,13 @@
 
     // Disable initramfs option if no ramdisk exists
     const hasRamdisk = result.images.some(img => img.type === 'ramdisk');
-    optInitramfs.disabled = !hasRamdisk;
-    optInitramfs.parentElement.classList.toggle('option-disabled', !hasRamdisk);
+    optInitramfs.dataset.unavailable = String(!hasRamdisk);
     if (!hasRamdisk) {
       optInitramfs.checked = false;
       initramfsUpload.classList.add('hidden');
       initramfsBuffer = null;
     }
+    updateMethodNote();
   }
 
   function esc(str) {
@@ -551,9 +557,32 @@
 
   // --- Bypass method ---
 
+  // Moving the entry point leaves every signed byte where it is, so it does
+  // not combine with the operations that rewrite image contents: those are
+  // switched off and disabled rather than left to fail in FitOps.root().
   function updateMethodNote() {
     for (const note of methodNotes) {
       note.classList.toggle('hidden', note.dataset.method !== optMethod.value);
+    }
+
+    const entryMethod = optMethod.value === 'entry-address';
+    entryOption.classList.toggle('hidden', !entryMethod);
+
+    if (entryMethod) {
+      optModel.checked = false;
+      optInitramfs.checked = false;
+      initramfsUpload.classList.add('hidden');
+      initramfsBuffer = null;
+      if (!optKernel.checked) {
+        optKernel.checked = true;
+        kernelUpload.classList.remove('hidden');
+      }
+    }
+
+    optModel.disabled = entryMethod;
+    optInitramfs.disabled = entryMethod || optInitramfs.dataset.unavailable === 'true';
+    for (const opt of [optModel, optInitramfs]) {
+      opt.parentElement.classList.toggle('option-disabled', opt.disabled);
     }
   }
 
@@ -636,6 +665,7 @@
         appendInitramfs: optInitramfs.checked,
         initramfsData: initramfsBuffer,
         method: optMethod.value,
+        fitLoadAddress: optFitAddress.value,
         recomputeHashes: !debugMode || optRecomputeHashes.checked,
         redirectSignatures: !debugMode || optRedirectSignatures.checked,
       };

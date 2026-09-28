@@ -379,6 +379,22 @@ header h1 {
   border-color: var(--accent);
 }
 
+.method-option input[type="text"] {
+  flex: 0 1 11rem;
+  padding: 0.3rem 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.9rem;
+}
+
+.method-option input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .option-note {
   margin: 0 0 0.4rem;
   font-size: 0.8rem;
@@ -629,6 +645,7 @@ footer {
 .badge-x509,
 .badge-hab,
 .badge-vab,
+.badge-entry,
 .badge-broken,
 .badge-pwned {
   display: inline-block;
@@ -658,7 +675,8 @@ footer {
 
 .badge-x509,
 .badge-hab,
-.badge-vab {
+.badge-vab,
+.badge-entry {
   background: #f8f3dd;
   border-color: #cfbf7e;
   color: #7a6712;

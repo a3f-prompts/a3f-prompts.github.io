@@ -117,8 +117,14 @@
           <label for="opt-method">Signature handling</label>
           <select id="opt-method">
             <option value="hashed-nodes">Redirect the signed hashed-nodes list</option>
+            <option value="entry-address">Move the unverified entry point</option>
             <option value="sanity-check">Sanity check &mdash; leave the signature alone</option>
           </select>
+        </div>
+        <div id="entry-option" class="method-option hidden">
+          <label for="opt-fit-address">Address the FIT is loaded at</label>
+          <input type="text" id="opt-fit-address" value="0x82000000" spellcheck="false"
+                 autocomplete="off">
         </div>
         <p class="option-note method-note" data-method="hashed-nodes">
           Moves the signed image into an <code>orig-</code> container, rewrites the
@@ -128,6 +134,26 @@
           CVE-2026-33243 (barebox) and CVE-2026-46728 (Das U-Boot) cover: the patched
           releases reconstruct the list of signed nodes instead of trusting the
           property.
+        </p>
+        <p class="option-note method-note hidden" data-method="entry-address">
+          For FITs signed with <code>required = "image"</code>, where a signature
+          covers its image's <code>data</code> and nothing else. The signed kernel
+          stays exactly as it is: the payload travels in an extra property of the same
+          node and the image's unverified <code>entry</code> is pointed at it, so the
+          bootloader checks the vendor's kernel and then jumps into the payload. The
+          address asked for is where the boot script loads the FIT itself, i.e.
+          <code>bootm</code>'s own argument, not the kernel's <code>load</code>
+          address. For a Thumb payload, add 1 to the <code>entry</code> afterwards.
+          Signed configurations have <code>entry</code> inside the digest, so this
+          method refuses them; use the <code>hashed-nodes</code> redirect there.
+          Whether <code>entry</code> is honoured at all depends on the architecture.
+          Das U-Boot jumps to it on ARM32, where the method was first demonstrated,
+          but discards it for an arm64 <code>Image</code>:
+          <code>bootm_load_os()</code> overwrites the entry point with the address
+          the kernel was relocated to whenever <code>CONFIG_CMD_BOOTI</code> is
+          enabled, which it is by default. barebox is not a target at all &mdash; its
+          <code>bootm</code> verifies through the configuration signature only, so it
+          never reaches the per-image path this method needs.
         </p>
         <p class="option-note method-note hidden" data-method="sanity-check">
           Patches the signed image where it stands and changes nothing else: no
@@ -178,12 +204,15 @@
         FIT image that were hashed and the parts that were booted were
         allowed to differ. This enables:
           <ul>
-            <li><strong><code>/model</code> property manipulation</strong> &mdash; the nested device tree's top-level <code>/model</code> property is changed, proving the DTB can be modified</li>
-            <li><strong>Kernel replacement</strong> &mdash; the kernel image data is swapped entirely, allowing unsigned payloads to be substituted</li>
-            <li><strong>Spawn root shell (TODO)</strong> &mdash; an initramfs is injected that opens a root shell</li>
+            <li><strong><code>/model</code></strong> in the signed device tree, so the
+            booted system reports the tampering itself
+            (<code>cat /proc/device-tree/model</code>)</li>
+            <li><strong>the kernel</strong>, replaced by a file you supply</li>
+            <li><strong>the ramdisk</strong>, with an initramfs of yours concatenated onto
+            it, so your files land in the booted rootfs on top of the vendor's</li>
           </ul>
           The <strong>signature handling</strong> drop-down picks what happens to the
-          signature itself; both methods explain themselves there.
+          signature itself; all three methods explain themselves there.
         </dd>
 
         <dt>Why do some images not have a signed configuration?</dt>
