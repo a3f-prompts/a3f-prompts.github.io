@@ -118,7 +118,18 @@ const FDT = (() => {
     // Preserve original strings block so serialization keeps the same ordering
     const origStrings = u8.slice(stringsStart, stringsStart + header.size_dt_strings);
 
-    return { header, reserveEntries, root, origStrings: new Uint8Array(origStrings) };
+    // Slack behind the string block (dtc -p, mkimage's signing headroom, ...).
+    // serialize() replays it so a re-serialized FIT never shrinks.
+    const padStart = Math.min(header.off_dt_strings + header.size_dt_strings, u8.byteLength);
+    const padEnd = Math.max(padStart, Math.min(header.totalsize, u8.byteLength));
+
+    return {
+      header,
+      reserveEntries,
+      root,
+      origStrings: new Uint8Array(origStrings),
+      origPadding: u8.slice(padStart, padEnd),
+    };
   }
 
   /**
@@ -188,7 +199,15 @@ const FDT = (() => {
     const rsvmapSize = (reserveEntries.length + 1) * 16; // +1 for terminator
     const structOff = rsvmapOff + rsvmapSize;
     const stringsOff = structOff + structSize;
-    const totalSize = stringsOff + stringsSize;
+    const blobSize = stringsOff + stringsSize;
+
+    /*
+     * Never shrink: a FIT spliced back into a disk image at its original size
+     * leaves everything behind it in place, while a smaller one would drag the
+     * remainder of the image forward.  Growing is unavoidable when the bypass
+     * adds nodes, and harmless -- only the shrinking direction is ours to fix.
+     */
+    const totalSize = Math.max(blobSize, header.totalsize || 0);
 
     const buf = new ArrayBuffer(totalSize);
     const dv = new DataView(buf);
@@ -205,6 +224,11 @@ const FDT = (() => {
     dv.setUint32(28, header.boot_cpuid_phys || 0);
     dv.setUint32(32, stringsSize);
     dv.setUint32(36, structSize);
+
+    // Replay the input's own padding into the slack we just reserved
+    if (totalSize > blobSize && tree.origPadding) {
+      u8.set(tree.origPadding.subarray(0, totalSize - blobSize), blobSize);
+    }
 
     // Write memory reservation block
     let off = rsvmapOff;

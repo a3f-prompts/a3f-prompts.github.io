@@ -1591,3 +1591,80 @@ describe('FDT.propertyOffset', () => {
     assert.equal(FDT.propertyOffset(fitBinary, ['images', 'nonesuch'], 'data'), null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Trailing padding
+//
+// mkimage leaves slack behind the string block (dtc -p).  Reproducing it keeps
+// the blob from shrinking, so a FIT spliced back into a disk image lands on its
+// original size and the data behind it does not move.
+// ---------------------------------------------------------------------------
+describe('Trailing padding', () => {
+  let fitBinary;
+
+  before(async () => {
+    fitBinary = (await buildTestFit()).binary;
+  });
+
+  // Append recognisable slack and grow totalsize to cover it, as dtc -p does.
+  function withPadding(binary, pad) {
+    const out = new Uint8Array(binary.byteLength + pad);
+    out.set(binary);
+    out.fill(0xa5, binary.byteLength);
+    new DataView(out.buffer).setUint32(4, out.byteLength);
+    return out;
+  }
+
+  // Everything behind the string block.
+  function tailOf(binary) {
+    const dv = new DataView(binary.buffer, binary.byteOffset, binary.byteLength);
+    return binary.slice(dv.getUint32(12) + dv.getUint32(32));
+  }
+
+  const sizeOf = binary =>
+    new DataView(binary.buffer, binary.byteOffset, binary.byteLength).getUint32(4);
+
+  it('replays the padding on a plain round-trip', () => {
+    const padded = withPadding(fitBinary, 32);
+    const out = FDT.serialize(FDT.parse(padded));
+
+    assert.equal(out.byteLength, padded.byteLength);
+    assert.equal(sizeOf(out), out.byteLength, 'totalsize must cover the padding');
+    assert.deepEqual(tailOf(out), new Uint8Array(32).fill(0xa5));
+  });
+
+  it('keeps the size when the operation fits in the padding', async () => {
+    const padded = withPadding(fitBinary, 64);
+    const out = await FitOps.root(padded, {
+      changeDtModel: false,
+      replaceKernel: true,
+      kernelData: new TextEncoder().encode('PWNED\n'),   // same length as the fixture's
+      method: 'sanity-check',
+    });
+
+    assert.equal(out.byteLength, padded.byteLength);
+    assert.equal(sizeOf(out), out.byteLength);
+    assert.ok(tailOf(out).byteLength > 0, 'some padding should survive');
+    assert.ok(tailOf(out).every(b => b === 0xa5), 'padding must be the input\'s own');
+  });
+
+  it('does nothing when the operation outgrows the padding', async () => {
+    const opts = {
+      changeDtModel: false,
+      replaceKernel: true,
+      kernelData: new TextEncoder().encode('a much longer replacement payload'),
+    };
+    const grown = await FitOps.root(withPadding(fitBinary, 16), opts);
+    const plain = await FitOps.root(fitBinary, opts);
+
+    assert.ok(grown.byteLength > fitBinary.byteLength + 16, 'should have outgrown the padding');
+    assert.equal(grown.byteLength, plain.byteLength, 'no padding once we are past it');
+    assert.equal(tailOf(grown).byteLength, 0);
+  });
+
+  it('leaves a FIT without padding alone', async () => {
+    const out = await FitOps.root(fitBinary, { changeDtModel: true, method: 'sanity-check' });
+    assert.equal(tailOf(out).byteLength, 0);
+    assert.equal(sizeOf(out), out.byteLength);
+  });
+});
