@@ -189,7 +189,9 @@
             it, so your files land in the booted rootfs on top of the vendor's</li>
           </ul>
           The <strong>signature handling</strong> drop-down picks what happens to the
-          signature itself; all three methods explain themselves there.
+          signature itself; all three methods explain themselves there. Every modified
+          FIT says so: in the injected <code>/model</code>, and in the
+          <code>signer-name</code> of every signature node.
         </dd>
 
         <dt>Why do some images not have a signed configuration?</dt>

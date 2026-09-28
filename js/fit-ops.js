@@ -700,6 +700,84 @@ const FitOps = (() => {
     }) || null;
   }
 
+  const MARKER = ' (manipulated by fitfall.de)';
+  const MARKER_SHORT = ' (fitfall.de)';
+
+  /*
+   * Informational properties of a signature node, in the order we are willing
+   * to sacrifice them for marker space.  barebox reads neither; in U-Boot they
+   * occur only under tools/, never in the runtime verifier.
+   */
+  const SIGNER_FILLER = ['timestamp', 'signer-version'];
+
+  /**
+   * Record in signer-name that the FIT was manipulated, paying for the extra
+   * characters by dropping informational properties from the same signature
+   * node.
+   *
+   * Nothing inside a signature node is hashed: fit_digest() reaches it with
+   * want == 1 -- a child of a signed node -- and only digests properties from
+   * want >= 2 on.  The FIT root is no candidate for this even though it looks
+   * unsigned: hashed-nodes starts with "/", so /timestamp and /description are
+   * covered by the configuration signature.
+   *
+   * The node keeps its exact byte size, so the FIT does not grow and one
+   * spliced back into a disk image does not shift the data behind it.
+   */
+  function markSignerName(sigNode) {
+    const signer = sigNode.properties.find(p => p.name === 'signer-name');
+    if (!signer) return false;
+
+    const orig = new TextDecoder().decode(signer.data).replace(/\0+$/, '');
+    if (orig.includes('fitfall.de')) return false;
+
+    const encoder = new TextEncoder();
+    const texts = [orig + MARKER, orig + MARKER_SHORT]
+      .map(t => encoder.encode(t.trimStart()));
+
+    // The property keeps its own 12-byte header, so only the value counts.
+    let budget = FDT.align4(signer.data.byteLength);
+    const drop = [];
+    let choice = texts.find(t => t.byteLength < budget);
+
+    for (const name of SIGNER_FILLER) {
+      if (choice) break;
+      const filler = sigNode.properties.find(p => p.name === name);
+      if (!filler) continue;
+      budget += 12 + FDT.align4(filler.data.byteLength);
+      drop.push(name);
+      choice = texts.find(t => t.byteLength < budget);
+    }
+
+    if (!choice) return false;
+
+    sigNode.properties = sigNode.properties.filter(p => !drop.includes(p.name));
+    const data = new Uint8Array(budget);
+    data.set(choice);   // the remainder stays zero: terminator plus padding
+    signer.data = data;
+    return true;
+  }
+
+  /**
+   * Mark every signature node of the FIT. Returns how many were marked.
+   */
+  function markSignatures(tree) {
+    let marked = 0;
+
+    for (const parent of ['configurations', 'images']) {
+      const top = FDT.findNode(tree.root, [parent]);
+      if (!top) continue;
+
+      for (const child of top.children) {
+        for (const sig of child.children) {
+          if (sig.name.startsWith('signature') && markSignerName(sig)) marked++;
+        }
+      }
+    }
+
+    return marked;
+  }
+
   /**
    * Full rooting operation: modify DT model, replace kernel, bypass signatures, serialize.
    */
@@ -734,6 +812,8 @@ const FitOps = (() => {
       }
     }
 
+    let mutated = false;
+
     // Resolve any external data references
     FDT.resolveExternalData(tree.root, u8buf);
 
@@ -753,10 +833,11 @@ const FitOps = (() => {
 
         const innerTree = FDT.parse(dtData);
         const origModel = FDT.getStringProperty(innerTree.root, 'model') || '';
-        FDT.setProperty(innerTree.root, 'model', origModel + ' [rooted by ifitfitsisits.com]');
+        FDT.setProperty(innerTree.root, 'model', origModel + ' [rooted by fitfall.de]');
         const newDtData = FDT.serialize(innerTree);
 
         await bypassSignature(tree, fdtImg.name, newDtData, options);
+        mutated = true;
       }
     }
 
@@ -765,6 +846,7 @@ const FitOps = (() => {
       if (kernelImages.length === 0) throw new Error('No kernel image found in FIT');
       for (const kernelImg of kernelImages) {
         await bypassSignature(tree, kernelImg.name, new Uint8Array(options.kernelData), options);
+        mutated = true;
       }
     }
 
@@ -789,7 +871,12 @@ const FitOps = (() => {
         combined.set(appendData, existingData.byteLength);
 
         await bypassSignature(tree, ramdiskImg.name, combined, options);
+        mutated = true;
       }
+    }
+
+    if (mutated) {
+      markSignatures(tree);
     }
 
     if (method === 'entry-address') {
@@ -806,6 +893,7 @@ const FitOps = (() => {
     sha256,
     METHODS,
     PAYLOAD_PROP,
+    markSignatures,
     findFdtImage,
     findKernelImage,
     findRamdiskImage,

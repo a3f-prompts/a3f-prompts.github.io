@@ -322,7 +322,7 @@ describe('DT model change', () => {
     const innerDtb = FDT.getProperty(fdtImg, 'data');
     const innerTree = FDT.parse(innerDtb);
     const model = FDT.getStringProperty(innerTree.root, 'model');
-    assert.equal(model, 'Test Board [rooted by ifitfitsisits.com]');
+    assert.equal(model, 'Test Board [rooted by fitfall.de]');
   });
 
   it('all flat_dt images across configurations get /model changed', async () => {
@@ -337,7 +337,7 @@ describe('DT model change', () => {
       const dtData = FDT.getProperty(fdtImg, 'data');
       const innerTree = FDT.parse(dtData);
       const model = FDT.getStringProperty(innerTree.root, 'model');
-      assert.ok(model.includes('[rooted by ifitfitsisits.com]'),
+      assert.ok(model.includes('[rooted by fitfall.de]'),
         `${fdtName} /model should be modified, got: ${model}`);
     }
   });
@@ -370,7 +370,7 @@ describe('DT model change', () => {
     const origModel = FDT.getStringProperty(origTree.root, 'model');
 
     assert.equal(origModel, 'Test Board', 'Original /model should be preserved');
-    assert.equal(newModel, 'Test Board [rooted by ifitfitsisits.com]', 'Modified /model should append rooting tag');
+    assert.equal(newModel, 'Test Board [rooted by fitfall.de]', 'Modified /model should append rooting tag');
     assert.notEqual(origModel, newModel, '/model must differ between original and modified DTBs');
   });
 });
@@ -1039,7 +1039,7 @@ describe('Multi-configuration coverage', () => {
       const dtData = FDT.getProperty(fdtImg, 'data');
       const innerTree = FDT.parse(dtData);
       const model = FDT.getStringProperty(innerTree.root, 'model');
-      assert.ok(model.includes('[rooted by ifitfitsisits.com]'),
+      assert.ok(model.includes('[rooted by fitfall.de]'),
         `${fdtName} /model should be modified, got: ${model}`);
     }
   });
@@ -1310,7 +1310,11 @@ describe('Sanity-check method', () => {
 
     const sig = FDT.findNode(tree.root, ['configurations', 'conf-1', 'signature-1']);
     const origSig = FDT.findNode(origTree.root, ['configurations', 'conf-1', 'signature-1']);
-    assert.deepEqual(sig.properties, origSig.properties);
+    // signer-name is rewritten on purpose -- nothing in a signature node is
+    // hashed -- but every property the verifier reads must be identical.
+    for (const name of ['algo', 'key-name-hint', 'sign-images', 'hashed-nodes']) {
+      assert.deepEqual(FDT.getProperty(sig, name), FDT.getProperty(origSig, name), name);
+    }
 
     const hashedNodes = new TextDecoder().decode(FDT.getProperty(sig, 'hashed-nodes'));
     assert.ok(hashedNodes.includes('/images/kernel'), `Expected the signed path, got: ${hashedNodes}`);
@@ -1331,7 +1335,7 @@ describe('Sanity-check method', () => {
     assert.ok(!names.some(n => n.startsWith('orig-')), `Unexpected container in: ${names}`);
 
     const inner = FDT.parse(FDT.getProperty(FDT.findNode(tree.root, ['images', 'fdt-1']), 'data'));
-    assert.ok(FDT.getStringProperty(inner.root, 'model').includes('[rooted by ifitfitsisits.com]'));
+    assert.ok(FDT.getStringProperty(inner.root, 'model').includes('[rooted by fitfall.de]'));
   });
 
   it('an explicit hashed-nodes method still uses the orig- container', async () => {
@@ -1589,6 +1593,129 @@ describe('FDT.propertyOffset', () => {
   it('returns null for what is not there', () => {
     assert.equal(FDT.propertyOffset(fitBinary, ['images', 'kernel'], 'nonesuch'), null);
     assert.equal(FDT.propertyOffset(fitBinary, ['images', 'nonesuch'], 'data'), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// signer-name marker
+//
+// Everything inside a signature node reaches fit_digest() with want == 1, so
+// none of it is hashed.  signer-name can therefore record the manipulation,
+// funded by the informational properties next to it.  (The FIT root cannot:
+// hashed-nodes starts with "/".)
+// ---------------------------------------------------------------------------
+describe('signer-name marker', () => {
+  let fitBinary;
+
+  before(async () => {
+    fitBinary = (await buildTestFit()).binary;
+  });
+
+  const PATCH = {
+    changeDtModel: false,
+    replaceKernel: true,
+    kernelData: new TextEncoder().encode('payload'),
+  };
+  // The default method redirects hashed-nodes, which resizes the signature
+  // node on its own; sanity-check leaves the node to us alone.
+  const PATCH_ONLY = { ...PATCH, method: 'sanity-check' };
+
+  const sigNode = binary =>
+    FDT.findNode(FDT.parse(binary).root, ['configurations', 'conf-1', 'signature-1']);
+  const nodeCost = node =>
+    node.properties.reduce((n, p) => n + 12 + FDT.align4(p.data.byteLength), 0);
+  const names = node => node.properties.map(p => p.name);
+
+  // Rebuild the fixture with the signature node's filler properties adjusted.
+  function withFiller(mutate) {
+    const tree = FDT.parse(fitBinary);
+    mutate(FDT.findNode(tree.root, ['configurations', 'conf-1', 'signature-1']));
+    return FDT.serialize(tree);
+  }
+
+  it('records the manipulation in signer-name', async () => {
+    const out = await FitOps.root(fitBinary, PATCH);
+    assert.equal(FDT.getStringProperty(sigNode(out), 'signer-name'),
+      'mkimage (fitfall.de)');
+  });
+
+  it('uses the long marker when signer-name already has room', async () => {
+    const roomy = withFiller(sig => {
+      const padded = new Uint8Array(48);
+      padded.set(new TextEncoder().encode('mkimage'));
+      FDT.setProperty(sig, 'signer-name', padded);
+    });
+    const out = await FitOps.root(roomy, PATCH_ONLY);
+    assert.equal(FDT.getStringProperty(sigNode(out), 'signer-name'),
+      'mkimage (manipulated by fitfall.de)');
+    // It fit in the property's own padding, so no filler was sacrificed.
+    for (const n of ['timestamp', 'signer-version']) {
+      assert.ok(names(sigNode(out)).includes(n), `${n} must survive`);
+    }
+    assert.equal(nodeCost(sigNode(out)), nodeCost(sigNode(roomy)));
+  });
+
+  it('pays for it from the informational properties, cheapest first', async () => {
+    const out = await FitOps.root(fitBinary, PATCH);
+    // The short marker is covered by the timestamp alone, so that is all it takes.
+    assert.ok(!names(sigNode(out)).includes('timestamp'), 'timestamp funds the marker');
+    assert.ok(names(sigNode(out)).includes('signer-version'),
+      'signer-version must not be dropped for nothing');
+    // Everything the verifier reads stays
+    for (const n of ['algo', 'key-name-hint', 'sign-images', 'hashed-nodes']) {
+      assert.ok(names(sigNode(out)).includes(n), `${n} must survive`);
+    }
+  });
+
+  it('leaves the signature node exactly as large as it was', async () => {
+    const out = await FitOps.root(fitBinary, PATCH_ONLY);
+    assert.equal(nodeCost(sigNode(out)), nodeCost(sigNode(fitBinary)));
+  });
+
+  it('does not mark an already marked FIT twice', async () => {
+    const once = await FitOps.root(fitBinary, PATCH);
+    const twice = await FitOps.root(once, PATCH);
+    assert.equal(FDT.getStringProperty(sigNode(twice), 'signer-name'),
+      'mkimage (fitfall.de)');
+  });
+
+  it('falls back to the short marker when the budget is tight', async () => {
+    const tight = withFiller(sig => {
+      FDT.setProperty(sig, 'signer-version', new Uint8Array([0]));
+    });
+    const out = await FitOps.root(tight, PATCH_ONLY);
+    assert.equal(FDT.getStringProperty(sigNode(out), 'signer-name'),
+      'mkimage (fitfall.de)');
+    assert.equal(nodeCost(sigNode(out)), nodeCost(sigNode(tight)));
+  });
+
+  it('leaves the node alone when even the short marker does not fit', async () => {
+    const broke = withFiller(sig => {
+      sig.properties = sig.properties.filter(
+        p => !['timestamp', 'signer-version'].includes(p.name));
+    });
+    const out = await FitOps.root(broke, PATCH_ONLY);
+    assert.equal(FDT.getStringProperty(sigNode(out), 'signer-name'), 'mkimage');
+    assert.equal(nodeCost(sigNode(out)), nodeCost(sigNode(broke)));
+  });
+
+  it('ignores a signature node without signer-name', async () => {
+    const nameless = withFiller(sig => {
+      sig.properties = sig.properties.filter(p => p.name !== 'signer-name');
+    });
+    const out = await FitOps.root(nameless, PATCH);
+    assert.equal(FDT.getProperty(sigNode(out), 'signer-name'), null);
+    assert.ok(names(sigNode(out)).includes('timestamp'), 'filler must not be eaten for nothing');
+  });
+
+  it('leaves the FIT root untouched', async () => {
+    const out = await FitOps.root(fitBinary, PATCH);
+    const before = FDT.parse(fitBinary).root.properties;
+    const after = FDT.parse(out).root.properties;
+    assert.deepEqual(after.map(p => p.name), before.map(p => p.name));
+    for (const p of before) {
+      assert.deepEqual(FDT.getProperty(FDT.parse(out).root, p.name), p.data, p.name);
+    }
   });
 });
 

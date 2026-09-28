@@ -142,6 +142,10 @@ async function buildTestFit(kernelData = null, fdtData = null) {
                       '/images/kernel\0/images/kernel/hash-1\0' +
                       '/images/fdt-1\0/images/fdt-1/hash-1\0'
                     )},
+                    // Informational properties, as mkimage writes them
+                    { name: 'timestamp', data: u32Prop(0x67000000) },
+                    { name: 'signer-version', data: strProp('2026.10') },
+                    { name: 'signer-name', data: strProp('mkimage') },
                   ],
                   children: [],
                 },
