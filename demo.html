@@ -200,9 +200,14 @@
 
         <dt>What does this website do?</dt>
         <dd>
-        This tool exploits the fact that prior to <b>FIXME</b> 2026.04.0, the parts of a
-        FIT image that were hashed and the parts that were booted were
-        allowed to differ. This enables:
+          <p>
+          Originally, it rewrote a signed FIT so that a bootloader verified the vendor's
+          image and booted yours. The bytes a FIT hashes and the bytes it boots are allowed
+          to differ, which is
+          <a href="https://github.com/barebox/barebox/security/advisories/GHSA-3fvj-q26p-j6h4"><b>CVE-2026-33243</b></a>
+          in barebox, fixed in <b>2026.03.0</b>, and <b>CVE-2026-46728</b> in Das U-Boot,
+          fixed in <b>2026.04</b>. You can pick what to patch:
+          </p>
           <ul>
             <li><strong><code>/model</code></strong> in the signed device tree, so the
             booted system reports the tampering itself
@@ -211,10 +216,17 @@
             <li><strong>the ramdisk</strong>, with an initramfs of yours concatenated onto
             it, so your files land in the booted rootfs on top of the vendor's</li>
           </ul>
-          The <strong>signature handling</strong> drop-down picks what happens to the
-          signature itself; all three methods explain themselves there. Every modified
-          FIT says so: in the injected <code>/model</code>, and in the
+          <p>
+          The <strong>signature handling</strong> drop-down picks which flaw gets it past
+          the signature; all three methods explain themselves there. Every modified FIT
+          says so: in the injected <code>/model</code>, and in the
           <code>signer-name</code> of every signature node.
+          </p>
+          <p>
+          It has since grown further methods. Each one is a pitfall to rule out in your
+          own boot chain: together they make it a way to check that a bootloader's
+          verified boot is configured correctly, and not merely enabled.
+          </p>
         </dd>
 
         <dt>Why do some images not have a signed configuration?</dt>
