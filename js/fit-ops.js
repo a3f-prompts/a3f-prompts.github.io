@@ -490,6 +490,22 @@ const FitOps = (() => {
   const PAYLOAD_PROP = 'pwn-payload';
 
   /**
+   * OS an arm64 image is made to claim, so that its entry survives.
+   *
+   * bootm_load_os() throws the FIT's entry away for an arm64 Linux image: it
+   * hands load to booti_setup(), relocates the verified kernel and sets
+   * images->ep to wherever it put it.  That branch is gated on
+   * os == IH_OS_LINUX, and os is exactly as unsigned as entry is, so claiming
+   * a different OS walks straight past it.  vxworks is the one worth claiming:
+   * CONFIG_BOOTM_VXWORKS defaults to y wherever bootm is built at all, and its
+   * handler is one of the few that does not refuse FIT images -- the others
+   * reset the board with fit_unsupported_reset(), while do_bootvx_fdt() calls
+   * images->ep outright.  Architectures that honour entry as it stands are
+   * left as they are.
+   */
+  const ENTRY_OS_ARM64 = 'vxworks';
+
+  /**
    * Properties through which a configuration names an image.
    */
   const CONFIG_IMAGE_PROPS = [
@@ -569,6 +585,9 @@ const FitOps = (() => {
     const payload = newData instanceof Uint8Array ? newData : new Uint8Array(newData);
     FDT.setProperty(targetNode, PAYLOAD_PROP, payload);
     FDT.setProperty(targetNode, 'entry', addressBytes(0, addressCells(targetNode, root)));
+    if (FDT.getStringProperty(targetNode, 'arch') === 'arm64') {
+      FDT.setProperty(targetNode, 'os', ENTRY_OS_ARM64);
+    }
   }
 
   /**
@@ -893,6 +912,7 @@ const FitOps = (() => {
     sha256,
     METHODS,
     PAYLOAD_PROP,
+    ENTRY_OS_ARM64,
     markSignatures,
     findFdtImage,
     findKernelImage,

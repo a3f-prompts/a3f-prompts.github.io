@@ -1421,6 +1421,28 @@ describe('Entry-address bypass', () => {
     assert.deepEqual(FDT.getProperty(kernelOf(out), FitOps.PAYLOAD_PROP), PAYLOAD);
   });
 
+  it('leaves os alone where entry is honoured as it stands', async () => {
+    const out = await hijack(imageSigned);
+    assert.equal(FDT.getStringProperty(kernelOf(out), 'arch'), 'arm');
+    assert.equal(FDT.getStringProperty(kernelOf(out), 'os'), 'linux');
+  });
+
+  it('claims vxworks on arm64, where bootm would overwrite the entry', async () => {
+    // bootm_load_os() replaces images->ep with the address it relocated the
+    // verified kernel to, but only for an arm64 Linux image.  os is no more
+    // signed than entry is, so the image stops claiming Linux.
+    const tree = FDT.parse(imageSigned);
+    FDT.setProperty(FDT.findNode(tree.root, ['images', 'kernel']), 'arch', 'arm64');
+
+    const out = await hijack(FDT.serialize(tree));
+    assert.equal(FDT.getStringProperty(kernelOf(out), 'os'), FitOps.ENTRY_OS_ARM64);
+    assert.equal(FDT.getStringProperty(kernelOf(out), 'arch'), 'arm64');
+
+    // and the entry still lands on the payload, os being a byte longer
+    const entry = FitOps.validate(out).images.find(i => i.name === 'kernel').entry;
+    assert.deepEqual(out.slice(entry - BASE, entry - BASE + PAYLOAD.byteLength), PAYLOAD);
+  });
+
   it('flags the entry as pointing outside its image', async () => {
     assert.equal(FitOps.validate(imageSigned).images.find(i => i.name === 'kernel').entryEscapes, false);
     const out = await hijack(imageSigned);

@@ -123,14 +123,13 @@
           address. For a Thumb payload, add 1 to the <code>entry</code> afterwards.
           Signed configurations have <code>entry</code> inside the digest, so this
           method refuses them; use the <code>hashed-nodes</code> redirect there.
-          Whether <code>entry</code> is honoured at all depends on the architecture.
-          Das U-Boot jumps to it on ARM32, where the method was first demonstrated,
-          but discards it for an arm64 <code>Image</code>:
-          <code>bootm_load_os()</code> overwrites the entry point with the address
-          the kernel was relocated to whenever <code>CONFIG_CMD_BOOTI</code> is
-          enabled, which it is by default. barebox is not a target at all &mdash; its
-          <code>bootm</code> verifies through the configuration signature only, so it
-          never reaches the per-image path this method needs.
+          On arm64 the image is also made to claim <code>os = "vxworks"</code>:
+          <code>bootm</code> would otherwise overwrite <code>entry</code> with
+          wherever it relocated the verified kernel, and it only does that for
+          Linux &mdash; <code>os</code> is no more signed than <code>entry</code> is.
+          barebox is not a target: its <code>bootm</code> verifies through the
+          configuration signature only, so it never reaches the per-image path this
+          method needs.
         </p>
         <p class="option-note method-note hidden" data-method="sanity-check">
           Patches the signed image where it stands and changes nothing else: no
